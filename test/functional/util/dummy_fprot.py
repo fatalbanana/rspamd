@@ -10,7 +10,7 @@ import dummy_killer
 
 PID = "/tmp/dummy_fprot.pid"
 
-class MyTCPHandler(socketserver.BaseRequestHandler):
+class MyUnixStreamHandler(socketserver.BaseRequestHandler):
 
     def handle(self):
         self.data = self.request.recv(1024).strip()
@@ -22,11 +22,9 @@ class MyTCPHandler(socketserver.BaseRequestHandler):
 
 if __name__ == "__main__":
 
-    HOST = "localhost"
-
     alen = len(sys.argv)
     if alen > 1:
-        port = int(sys.argv[1])
+        port = sys.argv[1]
         if alen >= 4:
             PID = sys.argv[3]
             foundvirus = bool(sys.argv[2])
@@ -35,14 +33,11 @@ if __name__ == "__main__":
         else:
             foundvirus = False
     else:
-        port = 10200
+        port = "/tmp/fake_fprot.sock"
         foundvirus = False
 
-    server = socketserver.TCPServer((HOST, port), MyTCPHandler, bind_and_activate=False)
-    server.allow_reuse_address = True
+    server = socketserver.UnixStreamServer(port, MyUnixStreamHandler, bind_and_activate=True)
     server.foundvirus = foundvirus
-    server.server_bind()
-    server.server_activate()
 
     dummy_killer.setup_killer(server)
     dummy_killer.write_pid(PID)
@@ -52,3 +47,4 @@ if __name__ == "__main__":
     except socket.error:
         print("Socket closed")
     server.server_close()
+    os.remove(port)

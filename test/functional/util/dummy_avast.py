@@ -9,7 +9,7 @@ import sys
 
 import dummy_killer
 
-class MyTCPHandler(socketserver.BaseRequestHandler):
+class MyUnixStreamHandler(socketserver.BaseRequestHandler):
 
     def handle(self):
         self.request.sendall(b"220 DAEMON\r\n")
@@ -23,24 +23,20 @@ class MyTCPHandler(socketserver.BaseRequestHandler):
         self.request.close()
 
 if __name__ == "__main__":
-    HOST = "localhost"
 
     alen = len(sys.argv)
     if alen > 1:
-        port = int(sys.argv[1])
+        port = sys.argv[1]
         if alen >= 3:
             foundvirus = bool(sys.argv[2])
         else:
             foundvirus = False
     else:
-        port = 3310
+        port = "/tmp/dummy_avast.sock"
         foundvirus = False
 
-    server = socketserver.TCPServer((HOST, port), MyTCPHandler, bind_and_activate=False)
-    server.allow_reuse_address = True
+    server = socketserver.UnixStreamServer(port, MyUnixStreamHandler, bind_and_activate=True)
     server.foundvirus = foundvirus
-    server.server_bind()
-    server.server_activate()
 
     dummy_killer.setup_killer(server)
     dummy_killer.write_pid(PID)
@@ -51,3 +47,4 @@ if __name__ == "__main__":
         print("Socket closed")
 
     server.server_close()
+    os.remove(port)
