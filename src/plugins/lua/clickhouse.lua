@@ -979,8 +979,8 @@ local function clickhouse_maybe_send_data_periodic(cfg, ev_base, now)
 
   if need_collect then
     -- Do it atomic
-    local saved_rows = data_rows
-    local saved_custom = custom_rows
+    local saved_rows = lua_util.shallowcopy(data_rows)
+    local saved_custom = lua_util.shallowcopy(custom_rows)
     nrows = 0
     last_collection = now
     used_memory = 0
@@ -1405,8 +1405,8 @@ if opts then
     rspamd_config:register_finish_script(function(task)
       if nrows > 0 then
         final_call = true
-        local saved_rows = data_rows
-        local saved_custom = custom_rows
+        local saved_rows = lua_util.shallowcopy(data_rows)
+        local saved_custom = lua_util.shallowcopy(custom_rows)
 
         nrows = 0
         data_rows = {}
