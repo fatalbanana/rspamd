@@ -23,7 +23,6 @@ local fun = require "fun"
 local lua_redis = require "lua_redis"
 local lua_util = require "lua_util"
 local lua_verdict = require "lua_verdict"
-local meta_functions = require "lua_meta"
 local neural_common = require "plugins/neural"
 local rspamd_kann = require "rspamd_kann"
 local rspamd_logger = require "rspamd_logger"
@@ -76,31 +75,6 @@ local redis_profile_schema = ts.shape{
 
 local has_blas = rspamd_tensor.has_blas()
 local text_cookie = rspamd_text.cookie
-
-local function result_to_vector(task, profile)
-  if not profile.zeros then
-    -- Fill zeros vector
-    local zeros = {}
-    for i=1,meta_functions.count_metatokens() do
-      zeros[i] = 0.0
-    end
-    for _,_ in ipairs(profile.symbols) do
-      zeros[#zeros + 1] = 0.0
-    end
-    profile.zeros = zeros
-  end
-
-  local vec = lua_util.shallowcopy(profile.zeros)
-  local mt = meta_functions.rspamd_gen_metatokens(task)
-
-  for i,v in ipairs(mt) do
-    vec[i] = v
-  end
-
-  task:process_ann_tokens(profile.symbols, vec, #mt, 0.1)
-
-  return vec
-end
 
 -- Creates and stores ANN profile in Redis
 local function new_ann_profile(task, rule, set, version)
@@ -163,7 +137,7 @@ local function ann_scores_filter(task)
     end
 
     if ann then
-      local vec = result_to_vector(task, profile)
+      local vec = neural_common.result_to_vector(task, profile)
 
       local score
       local out = ann:apply1(vec, set.ann.pca)
@@ -238,10 +212,12 @@ local function ann_push_task_result(rule, task, verdict, score, set)
       learn_spam = false
 
       -- Explicitly store tokens in cache
-      local vec = result_to_vector(task, set)
+      local vec = neural_common.result_to_vector(task, set)
       task:cache_set('neural_vec_mpack', ucl.to_format(vec, 'msgpack'))
       task:cache_set('neural_profile_digest', set.digest)
       skip_reason = 'store_pool_only has been set'
+            rspamd_logger.infox(rspamd_config, 'LO LEWIS SET VEC MPACK %1', vec)
+    rspamd_logger.infox(task, 'CACHE CONTROL GET neural_vec_mpack: <<%1>>', task:cache_get('neural_vec_mpack'))
     end
   end
 
@@ -255,7 +231,7 @@ local function ann_push_task_result(rule, task, verdict, score, set)
         local nspam,nham = data[1],data[2]
 
         if neural_common.can_push_train_vector(rule, task, learn_type, nspam, nham) then
-          local vec = result_to_vector(task, set)
+          local vec = neural_common.result_to_vector(task, set)
 
           local str = rspamd_util.zstd_compress(table.concat(vec, ';'))
           local target_key = set.ann.redis_key .. '_' .. learn_type

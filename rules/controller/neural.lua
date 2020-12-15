@@ -28,9 +28,8 @@ local learn_request_schema = ts.shape{
   spam_vec = ts.array_of(ts.array_of(ts.number)),
 }
 
-neural_common.process_rules_settings()
-
 local function handle_learn(task, conn)
+  neural_common.process_rules_settings()
   local parser = ucl.parser()
   local ok, err = parser:parse_text(task:get_rawbody())
   if not ok then

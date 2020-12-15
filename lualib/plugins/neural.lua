@@ -390,7 +390,13 @@ end
 
 -- This function receives training vectors, checks them, spawn learning and saves ANN in Redis
 local function spawn_train(params)
-  rspamd_logger.infox(rspamd_config, 'LEWIS BEHOLD DEBUGGING %1', params)
+	rspamd_logger.infox(rspamd_config, 'LEWIS DUM MORAN %1', meta_functions.rspamd_count_metatokens())
+  for i, v in ipairs(params.spam_vec) do
+	  rspamd_logger.infox(rspamd_config, 'OMG LEWIS SPAM_VEC %1 %2', i, v)
+  end
+  for i, v in ipairs(params.ham_vec) do
+	  rspamd_logger.infox(rspamd_config, 'OMG LEWIS HAM_VEC %1 %2', i, v)
+  end
   -- Check training data sanity
   -- Now we need to join inputs and create the appropriate test vectors
   local n = #params.set.symbols +
@@ -735,6 +741,31 @@ local function get_rule_settings(task, rule)
   return set
 end
 
+local function result_to_vector(task, profile)
+  if not profile.zeros then
+    -- Fill zeros vector
+    local zeros = {}
+    for i=1,meta_functions.count_metatokens() do
+      zeros[i] = 0.0
+    end
+    for _,_ in ipairs(profile.symbols) do
+      zeros[#zeros + 1] = 0.0
+    end
+    profile.zeros = zeros
+  end
+
+  local vec = lua_util.shallowcopy(profile.zeros)
+  local mt = meta_functions.rspamd_gen_metatokens(task)
+
+  for i,v in ipairs(mt) do
+    vec[i] = v
+  end
+
+  task:process_ann_tokens(profile.symbols, vec, #mt, 0.1)
+
+  return vec
+end
+
 return {
   can_push_train_vector = can_push_train_vector,
   create_ann = create_ann,
@@ -749,6 +780,7 @@ return {
   redis_ann_prefix = redis_ann_prefix,
   redis_params = redis_params,
   redis_script_id = redis_script_id,
+  result_to_vector = result_to_vector,
   settings = settings,
   spawn_train = spawn_train,
 }
