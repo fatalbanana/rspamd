@@ -1,5 +1,5 @@
 --[[
-Copyright (c) 2017, Vsevolod Stakhov <vsevolod@highsecure.ru>
+Copyright (c) 2021, Vsevolod Stakhov <vsevolod@highsecure.ru>
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,17 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ]]--
 
-if confighelp then
-  return
-end
-
-local rspamd_logger = require "rspamd_logger"
-local rspamd_http = require "rspamd_http"
 local hash = require "rspamd_cryptobox_hash"
-local rspamd_url = require "rspamd_url"
 local lua_util = require "lua_util"
 local lua_redis = require "lua_redis"
-local N = "url_redirector"
+local rspamd_http = require "rspamd_http"
+local rspamd_logger = require "rspamd_logger"
+local rspamd_url = require "rspamd_url"
+
+local M = {}
+local N = 'url_redirector'
 
 -- Some popular UA
 local default_ua = {
@@ -57,7 +55,7 @@ local settings = {
   redirector_hosts_map = nil -- check only those redirectors
 }
 
-local function adjust_url(task, orig_url, redir_url)
+M.adjust_url = function(task, orig_url, redir_url)
   if type(redir_url) == 'string' then
     redir_url = rspamd_url.create(task:get_mempool(), redir_url)
   end
@@ -74,14 +72,14 @@ local function adjust_url(task, orig_url, redir_url)
   end
 end
 
-local function cache_url(task, orig_url, url, key, param)
+M.cache_url = function(task, orig_url, url, key, param)
   -- String representation
   local str_orig_url = tostring(orig_url)
   local str_url = tostring(url)
 
   if str_url ~= str_orig_url then
     -- Set redirected url
-    adjust_url(task, orig_url, url)
+    M.adjust_url(task, orig_url, url)
   end
 
   local function redis_trim_cb(err, _)
@@ -174,7 +172,7 @@ local function resolve_cached(task, orig_url, url, key, ntries)
       if err then
         rspamd_logger.infox(task, 'found redirect error from %s to %s, err message: %s',
           orig_url, url, err)
-        cache_url(task, orig_url, url, key)
+        M.cache_url(task, orig_url, url, key)
       else
         if code == 200 then
           if orig_url == url then
@@ -185,7 +183,7 @@ local function resolve_cached(task, orig_url, url, key, ntries)
               orig_url, url)
           end
 
-          cache_url(task, orig_url, url, key)
+          M.cache_url(task, orig_url, url, key)
 
         elseif code == 301 or code == 302 then
           local loc = headers['location']
@@ -304,6 +302,12 @@ local function url_redirector_process_url(task, url)
   resolve_cached(task, url, url, key, 1)
 end
 
+local function url_redirector_process_urls(task, sp_urls)
+  for _,u in ipairs(sp_urls) do
+    url_redirector_process_url(task, u)
+  end
+end
+
 local function url_redirector_handler(task)
   local sp_urls = lua_util.extract_specific_urls({
     task = task,
@@ -319,54 +323,75 @@ local function url_redirector_handler(task)
   })
 
   if sp_urls then
-    for _,u in ipairs(sp_urls) do
-      url_redirector_process_url(task, u)
-    end
+    url_redirector_process_urls(task, sp_urls)
   end
 end
 
-local opts =  rspamd_config:get_all_opt('url_redirector')
-if opts then
+M.configure_module = function()
+
+  local opts = rspamd_config:get_all_opt('url_redirector')
+  if not opts then
+    return
+  end
   settings = lua_util.override_defaults(settings, opts)
   redis_params = lua_redis.parse_redis_server('url_redirector', settings)
 
   if not redis_params then
     rspamd_logger.infox(rspamd_config, 'no servers are specified, disabling module')
     lua_util.disable_module(N, "redis")
-  else
+    return
+  end
 
-    if not settings.redirector_hosts_map then
-      rspamd_logger.infox(rspamd_config, 'no redirector_hosts_map option is specified, disabling module')
+  if settings.external_redirector then
+    local f, err = loadfile(settings.external_redirector)
+    if f and type(f) ~= 'function' then
+      err = "wrong type returned: " .. type(f)
+      f = nil
+    end
+    if not f then
+      rspamd_logger.errx(rspamd_config,
+          "couldn't load external redirector function: %s, disabling module", err)
       lua_util.disable_module(N, "config")
-    else
-      local lua_maps = require "lua_maps"
-      settings.redirector_hosts_map = lua_maps.map_add_from_ucl(settings.redirector_hosts_map,
-          'set', 'Redirectors definitions')
-
-      lua_redis.register_prefix(settings.key_prefix .. '[a-z0-9]{32}', N,
-          'URL redirector hashes', {
-            type = 'string',
-          })
-      if settings.top_urls_key then
-        lua_redis.register_prefix(settings.top_urls_key, N,
-            'URL redirector top urls', {
-              type = 'zlist',
-            })
-      end
-      local id = rspamd_config:register_symbol{
-        name = 'URL_REDIRECTOR_CHECK',
-        type = 'callback,prefilter',
-        callback = url_redirector_handler,
-      }
-
-      if settings.redirector_symbol then
-        rspamd_config:register_symbol{
-          name = settings.redirector_symbol,
-          type = 'virtual',
-          parent = id,
-          score = 0,
-        }
-      end
+      return
     end
   end
+
+  if not settings.redirector_hosts_map then
+    rspamd_logger.infox(rspamd_config, 'no redirector_hosts_map option is specified, disabling module')
+    lua_util.disable_module(N, "config")
+    return
+  end
+
+  local lua_maps = require "lua_maps"
+  settings.redirector_hosts_map = lua_maps.map_add_from_ucl(settings.redirector_hosts_map,
+      'set', 'Redirectors definitions')
+
+  lua_redis.register_prefix(settings.key_prefix .. '[a-z0-9]{32}', N,
+      'URL redirector hashes', {
+          type = 'string',
+      })
+
+  if settings.top_urls_key then
+    lua_redis.register_prefix(settings.top_urls_key, N,
+        'URL redirector top urls', {
+            type = 'zlist',
+        })
+  end
+
+  local id = rspamd_config:register_symbol{
+    name = 'URL_REDIRECTOR_CHECK',
+    type = 'callback,prefilter',
+    callback = url_redirector_handler,
+  }
+
+  if settings.redirector_symbol then
+    rspamd_config:register_symbol{
+      name = settings.redirector_symbol,
+      type = 'virtual',
+      parent = id,
+      score = 0,
+    }
+  end
 end
+
+return M
