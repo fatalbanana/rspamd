@@ -163,7 +163,7 @@ local function resolve_cached(task, orig_url, url, key, ntries)
       -- We cannot resolve more, stop
       rspamd_logger.debugm(N, task, 'cannot get more requests to resolve %s, stop on %s after %s attempts',
         orig_url, url, ntries)
-      cache_url(task, orig_url, url, key)
+      M.cache_url(task, orig_url, url, key)
 
       return
     end
@@ -201,19 +201,19 @@ local function resolve_cached(task, orig_url, url, key, ntries)
               else
                 lua_util.debugm(N, task,
                   "stop resolving redirects as %s is not a redirector", loc)
-                cache_url(task, orig_url, redir_url, key)
+                M.cache_url(task, orig_url, redir_url, key)
               end
             else
               resolve_cached(task, orig_url, redir_url, key, ntries + 1)
             end
           else
             rspamd_logger.debugm(N, task, "no location, headers: %s", headers)
-            cache_url(task, orig_url, url, key)
+            M.cache_url(task, orig_url, url, key)
           end
         else
           rspamd_logger.debugm(N, task, 'found redirect error from %s to %s, err code: %s',
             orig_url, url, code)
-          cache_url(task, orig_url, url, key)
+          M.cache_url(task, orig_url, url, key)
         end
       end
     end
@@ -354,6 +354,7 @@ M.configure_module = function()
       lua_util.disable_module(N, "config")
       return
     end
+    url_redirector_process_urls = f
   end
 
   if not settings.redirector_hosts_map then
