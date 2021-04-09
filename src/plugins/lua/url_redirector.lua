@@ -156,144 +156,143 @@ local function cache_url(task, orig_url, url, key, param)
   end
 end
 
+local resolve_cached
+
+local function resolve_url(task, orig_url, url, key, ntries)
+  if ntries > settings.nested_limit then
+    -- We cannot resolve more, stop
+    rspamd_logger.debugm(N, task, 'cannot get more requests to resolve %s, stop on %s after %s attempts',
+      orig_url, url, ntries)
+    return url
+  end
+
+  local ua
+  if type(settings.user_agent) == 'string' then
+    ua = settings.user_agent
+  else
+    ua = settings.user_agent[math.random(#settings.user_agent)]
+  end
+
+  lua_util.debugm(N, task, 'select user agent %s', ua)
+
+  local err, result = rspamd_http.request{
+    headers = {
+      ['User-Agent'] = ua,
+    },
+    url = tostring(url),
+    task = task,
+    method = 'head',
+    max_size = settings.max_size,
+    timeout = settings.timeout,
+    opaque_body = true,
+    no_ssl_verify = not settings.check_ssl,
+  }
+
+  if err then
+    rspamd_logger.infox(task, 'found redirect error from %s to %s, err message: %s',
+      orig_url, url, err)
+    return url
+  end
+  local code = result.code
+  if code == 200 then
+    if orig_url == url then
+      rspamd_logger.infox(task, 'direct url %s, err code 200',
+        url)
+    else
+      rspamd_logger.infox(task, 'found redirect from %s to %s, err code 200',
+        orig_url, url)
+    end
+
+    return url
+
+  elseif code == 301 or code == 302 then
+    local loc = result.headers['location']
+    local redir_url
+    if loc then
+      redir_url = rspamd_url.create(task:get_mempool(), loc)
+    end
+    rspamd_logger.debugm(N, task, 'found redirect from %s to %s, err code %s',
+      orig_url, loc, code)
+
+    if redir_url then
+      if settings.redirectors_only then
+        if settings.redirector_hosts_map:get_key(redir_url:get_host()) then
+          resolve_cached(task, orig_url, redir_url, key, ntries + 1)
+        else
+          lua_util.debugm(N, task,
+            "stop resolving redirects as %s is not a redirector", loc)
+          return redir_url
+        end
+      else
+        resolve_cached(task, orig_url, redir_url, key, ntries + 1)
+      end
+    else
+      rspamd_logger.debugm(N, task, "no location, headers: %s", result.headers)
+      return url
+    end
+  else
+    rspamd_logger.debugm(N, task, 'found redirect error from %s to %s, err code: %s',
+      orig_url, url, code)
+    return url
+  end
+end
+
 -- Resolve maybe cached url
 -- Orig url is the original url object
 -- url should be a new url object...
-local function resolve_cached(task, orig_url, url, key, ntries)
-  local function resolve_url()
-    if ntries > settings.nested_limit then
-      -- We cannot resolve more, stop
-      rspamd_logger.debugm(N, task, 'cannot get more requests to resolve %s, stop on %s after %s attempts',
-        orig_url, url, ntries)
-      cache_url(task, orig_url, url, key)
+resolve_cached = function(task, orig_url, url, key, ntries)
 
+  local is_ok, connection = lua_redis.connect(redis_params, {task = task})
+  if not is_ok then
+    rspamd_logger.errx(task, 'unable to connect to redis')
+    return
+  end
+
+  local redis_err, redis_data
+  is_ok, redis_err = connection:add_cmd('GET', {key})
+  if not is_ok then
+    rspamd_logger.errx(task, 'unable to query cache: %1', redis_err)
+    return
+  end
+
+  is_ok, redis_data = connection:exec()
+  if not is_ok then
+    rspamd_logger.errx(task, 'failed to query cache')
+    return
+  end
+
+  if type(redis_data) == 'string' then
+    if redis_data ~= 'processing' then
+      -- Got cached result
+      rspamd_logger.debugm(N, task, 'found cached redirect from %s to %s',
+          url, redis_data)
+      if redis_data ~= tostring(orig_url) then
+        adjust_url(task, orig_url, redis_data)
+      end
+      return
+    else
+      -- Don't process URLs reserved by others
       return
     end
-
-    local function http_callback(err, code, _, headers)
-      if err then
-        rspamd_logger.infox(task, 'found redirect error from %s to %s, err message: %s',
-          orig_url, url, err)
-        cache_url(task, orig_url, url, key)
-      else
-        if code == 200 then
-          if orig_url == url then
-            rspamd_logger.infox(task, 'direct url %s, err code 200',
-              url)
-          else
-            rspamd_logger.infox(task, 'found redirect from %s to %s, err code 200',
-              orig_url, url)
-          end
-
-          cache_url(task, orig_url, url, key)
-
-        elseif code == 301 or code == 302 then
-          local loc = headers['location']
-          local redir_url
-          if loc then
-            redir_url = rspamd_url.create(task:get_mempool(), loc)
-          end
-          rspamd_logger.debugm(N, task, 'found redirect from %s to %s, err code %s',
-            orig_url, loc, code)
-
-          if redir_url then
-            if settings.redirectors_only then
-              if settings.redirector_hosts_map:get_key(redir_url:get_host()) then
-                resolve_cached(task, orig_url, redir_url, key, ntries + 1)
-              else
-                lua_util.debugm(N, task,
-                  "stop resolving redirects as %s is not a redirector", loc)
-                cache_url(task, orig_url, redir_url, key)
-              end
-            else
-              resolve_cached(task, orig_url, redir_url, key, ntries + 1)
-            end
-          else
-            rspamd_logger.debugm(N, task, "no location, headers: %s", headers)
-            cache_url(task, orig_url, url, key)
-          end
-        else
-          rspamd_logger.debugm(N, task, 'found redirect error from %s to %s, err code: %s',
-            orig_url, url, code)
-          cache_url(task, orig_url, url, key)
-        end
-      end
-    end
-
-    local ua
-    if type(settings.user_agent) == 'string' then
-      ua = settings.user_agent
-    else
-      ua = settings.user_agent[math.random(#settings.user_agent)]
-    end
-
-    lua_util.debugm(N, task, 'select user agent %s', ua)
-
-    rspamd_http.request{
-      headers = {
-        ['User-Agent'] = ua,
-      },
-      url = tostring(url),
-      task = task,
-      method = 'head',
-      max_size = settings.max_size,
-      timeout = settings.timeout,
-      opaque_body = true,
-      no_ssl_verify = not settings.check_ssl,
-      callback = http_callback
-    }
   end
-  local function redis_get_cb(err, data)
-    if not err then
-      if type(data) == 'string' then
-        if data ~= 'processing' then
-          -- Got cached result
-          rspamd_logger.debugm(N, task, 'found cached redirect from %s to %s',
-            url, data)
-          if data ~= tostring(orig_url) then
-            adjust_url(task, orig_url, data)
-          end
-          return
-        end
-      end
-    end
-    local function redis_reserve_cb(nerr, ndata)
-      if nerr then
-        rspamd_logger.errx(task, 'got error while setting redirect keys: %s', nerr)
-      elseif ndata == 'OK' then
-        resolve_url()
-      end
-    end
 
-    if ntries == 1 then
-      -- Reserve key in Redis that we are processing this redirection
-      local ret = lua_redis.redis_make_request(task,
-        redis_params, -- connect params
-        key, -- hash key
-        true, -- is write
-        redis_reserve_cb, --callback
-        'SET', -- command
-        {key, 'processing', 'EX', tostring(settings.timeout * 2), 'NX'} -- arguments
-      )
-      if not ret then
-        rspamd_logger.errx(task, 'Couldn\'t schedule SET')
-      end
-    else
-      -- Just continue resolving
-      resolve_url()
+  if ntries == 1 then
+    -- Reserve key in Redis that we are processing this redirection
+    is_ok, redis_err = connection:add_cmd('SET', {key, 'processing', 'EX', tostring(settings.timeout *2), 'NX'})
+    if not is_ok then
+      rspamd_logger.errx(task, 'unable to update cache: %1', redis_err)
+      return
     end
-
+    is_ok, redis_data = connection:exec()
+    if not is_ok or redis_data ~= 'OK' then
+      rspamd_logger.errx(task, 'failed to update cache %1', redis_data)
+      return
+    end
   end
-  local ret = lua_redis.redis_make_request(task,
-    redis_params, -- connect params
-    key, -- hash key
-    false, -- is write
-    redis_get_cb, --callback
-    'GET', -- command
-    {key} -- arguments
-  )
-  if not ret then
-    rspamd_logger.errx(task, 'cannot make redis request to check results')
+
+  local redir_url = resolve_url(task, orig_url, url, key, ntries)
+  if redir_url then
+    cache_url(task, orig_url, redir_url, key)
   end
 end
 
@@ -325,48 +324,71 @@ local function url_redirector_handler(task)
   end
 end
 
-local opts =  rspamd_config:get_all_opt('url_redirector')
-if opts then
-  settings = lua_util.override_defaults(settings, opts)
-  redis_params = lua_redis.parse_redis_server('url_redirector', settings)
+local opts = rspamd_config:get_all_opt('url_redirector')
+if not opts then
+  return
+end
+settings = lua_util.override_defaults(settings, opts)
+redis_params = lua_redis.parse_redis_server('url_redirector', settings)
 
-  if not redis_params then
-    rspamd_logger.infox(rspamd_config, 'no servers are specified, disabling module')
-    lua_util.disable_module(N, "redis")
-  else
+if not redis_params then
+  rspamd_logger.infox(rspamd_config, 'no servers are specified, disabling module')
+  lua_util.disable_module(N, "redis")
+  return
+end
 
-    if not settings.redirector_hosts_map then
-      rspamd_logger.infox(rspamd_config, 'no redirector_hosts_map option is specified, disabling module')
-      lua_util.disable_module(N, "config")
-    else
-      local lua_maps = require "lua_maps"
-      settings.redirector_hosts_map = lua_maps.map_add_from_ucl(settings.redirector_hosts_map,
-          'set', 'Redirectors definitions')
-
-      lua_redis.register_prefix(settings.key_prefix .. '[a-z0-9]{32}', N,
-          'URL redirector hashes', {
-            type = 'string',
-          })
-      if settings.top_urls_key then
-        lua_redis.register_prefix(settings.top_urls_key, N,
-            'URL redirector top urls', {
-              type = 'zlist',
-            })
-      end
-      local id = rspamd_config:register_symbol{
-        name = 'URL_REDIRECTOR_CHECK',
-        type = 'callback,prefilter',
-        callback = url_redirector_handler,
-      }
-
-      if settings.redirector_symbol then
-        rspamd_config:register_symbol{
-          name = settings.redirector_symbol,
-          type = 'virtual',
-          parent = id,
-          score = 0,
-        }
-      end
-    end
+if settings.external_redirector then
+  local ok, f = pcall(dofile, settings.external_redirector)
+  if not ok then
+    rspamd_logger.errx(rspamd_config,
+        "couldn't load external redirector function: %s, disabling module", f)
+    lua_util.disable_module(N, "config")
+    return
   end
+  if type(f) ~= 'function' then
+    rspamd_logger.errx(rspamd_config,
+        "external redirector script returned %s (wanted function), disabling module", type(f))
+    lua_util.disable_module(N, "config")
+    return
+  end
+  rspamd_logger.infox(rspamd_config, "using external redirector function from %1", settings.external_redirector)
+  resolve_url = f
+end
+
+if not settings.redirector_hosts_map then
+  rspamd_logger.infox(rspamd_config, 'no redirector_hosts_map option is specified, disabling module')
+  lua_util.disable_module(N, "config")
+  return
+end
+
+local lua_maps = require "lua_maps"
+settings.redirector_hosts_map = lua_maps.map_add_from_ucl(settings.redirector_hosts_map,
+    'set', 'Redirectors definitions')
+
+lua_redis.register_prefix(settings.key_prefix .. '[a-z0-9]{32}', N,
+    'URL redirector hashes', {
+        type = 'string',
+    })
+
+if settings.top_urls_key then
+  lua_redis.register_prefix(settings.top_urls_key, N,
+      'URL redirector top urls', {
+          type = 'zlist',
+      })
+end
+
+local id = rspamd_config:register_symbol{
+  name = 'URL_REDIRECTOR_CHECK',
+  type = 'callback,prefilter',
+  callback = url_redirector_handler,
+  flags = 'coro',
+}
+
+if settings.redirector_symbol then
+  rspamd_config:register_symbol{
+    name = settings.redirector_symbol,
+    type = 'virtual',
+    parent = id,
+    score = 0,
+  }
 end
