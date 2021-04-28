@@ -10,7 +10,7 @@ ${CONFIG}       ${TESTDIR}/configs/plugins.conf
 ${MESSAGE}      ${TESTDIR}/messages/subject1.eml
 ${UTF_MESSAGE}  ${TESTDIR}/messages/utf.eml
 ${URL_TLD}      ${TESTDIR}/../lua/unit/test_tld.dat
-${RSPAMD_SCOPE}  Test
+${RSPAMD_SCOPE}  Suite
 
 
 *** Test Cases ***

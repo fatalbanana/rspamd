@@ -140,6 +140,15 @@ Expect Symbol With Score And Exact Options
   Expect Symbol With Exact Options  ${symbol}  @{options}
   Expect Symbol With Score  ${symbol}  ${score}
 
+Export Scoped Variables
+  [Arguments]  ${scope}  &{vars}
+  FOR  ${k}  ${v}  IN  &{vars}
+    Run Keyword If  '${scope}' == 'Test'  Set Test Variable  ${${k}}  ${v}
+    ...  ELSE IF  '${scope}' == 'Suite'  Set Suite Variable  ${${k}}  ${v}
+    ...  ELSE IF  '${scope}' == 'Global'  Set Global Variable  ${${k}}  ${v}
+    ...  ELSE  Fail  message="Don't know what to do with scope: ${scope}"
+  END
+
 Generic Teardown
   Run Keyword If  '${CONTROLLER_ERRORS}' == 'True'  Check Controller Errors
   Shutdown Process With Children  ${RSPAMD_PID}
@@ -151,6 +160,24 @@ Generic Teardown
 Log does not contain segfault record
   ${log} =  Get File  ${TMPDIR}/rspamd.log  encoding_errors=ignore
   Should not contain  ${log}  Segmentation fault:  msg=Segmentation fault detected
+
+New Setup
+  [Arguments]  &{kw}
+
+  # Create and chown temporary directory
+  ${TMPDIR} =  Make Temporary Directory
+  Set Directory Ownership  ${TMPDIR}  ${RSPAMD_USER}  ${RSPAMD_GROUP}
+
+  # Export ${TMPDIR} to appropriate scope according to ${RSPAMD_SCOPE}
+  Export Scoped Variables  ${RSPAMD_SCOPE}  TMPDIR=${TMPDIR}
+
+  # Set additional values to ${kw} that are expected to be available everywhere
+  Set To Dictionary  ${kw}  LOCAL_ADDR=${LOCAL_ADDR}  PORT_NORMAL=${PORT_NORMAL}
+  ...  KEY_PUB1=${KEY_PUB1}  KEY_PVT1=${KEY_PVT1}  PORT_CONTROLLER=${PORT_CONTROLLER}
+  ...  TESTDIR=${TESTDIR}  INSTALLROOT=${INSTALLROOT}  TMPDIR=${TMPDIR}
+  ...  MAP_WATCH_INTERVAL=${MAP_WATCH_INTERVAL}  PORT_PROXY=${PORT_PROXY}
+
+  New Run Rspamd  &{kw}
 
 Normal Teardown
   Generic Teardown
@@ -210,6 +237,43 @@ Run Rspamc
   Log  ${result.stdout}
   [Return]  ${result}
 
+New Run Rspamd
+  [Arguments]  &{kwargs}
+
+  # Set each kwarg to environment variable prefixed with RSPAMD_
+  FOR  ${k}  ${v}  IN  &{kwargs}
+    Set Environment Variable  RSPAMD_${k}  ${v}
+  END
+
+  # Dump templated config or errors to log
+  ${result} =  Run Process  ${RSPAMADM}  configdump  -c  ${CONFIG}
+  Run Keyword If  ${result.rc} == 0  Log  ${result.stdout}
+  ...  ELSE  Log  ${result.stderr}
+
+  # Fix directory ownership (maybe do this somewhere else)
+  Set Directory Ownership  ${TMPDIR}  ${RSPAMD_USER}  ${RSPAMD_GROUP}
+
+  # Run Rspamd
+  ${result} =  Run Process  ${RSPAMD}  -u  ${RSPAMD_USER}  -g  ${RSPAMD_GROUP}
+  ...  -c  ${CONFIG}  env:TMPDIR=${TMPDIR}  env:DBDIR=${TMPDIR}  env:LD_LIBRARY_PATH=${TESTDIR}/../../contrib/aho-corasick
+  ...  env:RSPAMD_INSTALLROOT=${INSTALLROOT}  env:RSPAMD_TMPDIR=${TMPDIR}  env:RSPAMD_TESTDIR=${TESTDIR}
+  # We need to discard output to avoid hanging Robot
+  ...  stdout=DEVNULL  stderr=DEVNULL
+
+  # Abort if it failed
+  Should Be Equal As Integers  ${result.rc}  0
+
+  # Wait for pid file to be written
+  Wait Until Keyword Succeeds  10x  1 sec  Check Pidfile  ${TMPDIR}/rspamd.pid  timeout=0.5s
+
+  # Confirm worker is reachable
+  Wait Until Keyword Succeeds  5x  1 sec  Ping Rspamd  ${LOCAL_ADDR}  ${PORT_NORMAL}
+
+  # Read PID from PIDfile and export it to appropriate scope as ${RSPAMD_PID}
+  ${RSPAMD_PID} =  Get File  ${TMPDIR}/rspamd.pid
+  Export Scoped Variables  ${RSPAMD_SCOPE}  RSPAMD_PID=${RSPAMD_PID}
+
+# Eventually get rid of this
 Run Rspamd
   [Arguments]  @{vargs}  &{kwargs}
   ${has_CONFIG} =  Evaluate  'CONFIG' in $kwargs
