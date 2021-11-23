@@ -59,6 +59,7 @@ local function check_specific_map(input, uri, m, results, report_misses)
       hit = true,
     }
     table.insert(results, result)
+    return true
   elseif report_misses then
     local result = {
       map = uri,
@@ -68,10 +69,13 @@ local function check_specific_map(input, uri, m, results, report_misses)
     }
     table.insert(results, result)
   end
+  return false
 end
 
 local function handle_query_map(_, conn, req_params)
   maybe_fill_maps_cache()
+  local report_misses = req_params.report_misses
+  local one_shot = req_params.one_shot
   local keys_to_check = {}
 
   if req_params.value and req_params.value ~= '' then
@@ -83,7 +87,10 @@ local function handle_query_map(_, conn, req_params)
   local results = {}
   for _,key in ipairs(keys_to_check) do
     for uri,m in pairs(maps_cache) do
-      check_specific_map(key, uri, m, results, req_params.report_misses)
+      local res = check_specific_map(key, uri, m, results, report_misses)
+      if one_shot and res then
+        break
+      end
     end
   end
   conn:send_ucl{
@@ -94,6 +101,8 @@ end
 
 local function handle_query_specific_map(_, conn, req_params)
   maybe_fill_maps_cache()
+  local report_misses = req_params.report_misses
+  local one_shot = req_params.one_shot
   -- Fill keys to check
   local keys_to_check = {}
   if req_params.value and req_params.value ~= '' then
@@ -124,7 +133,10 @@ local function handle_query_specific_map(_, conn, req_params)
   local results = {}
   for _,key in ipairs(keys_to_check) do
     for uri,m in pairs(maps_to_check) do
-      check_specific_map(key, uri, m, results, req_params.report_misses)
+      local res = check_specific_map(key, uri, m, results, report_misses)
+      if one_shot and res then
+        break
+      end
     end
   end
 
@@ -144,6 +156,7 @@ end
 
 local query_json_schema = ts.shape{
   maps = ts.array_of(ts.string):is_optional(),
+  one_shot = ts.boolean:is_optional(),
   report_misses = ts.boolean:is_optional(),
   values = ts.array_of(ts.string),
 }
@@ -167,6 +180,7 @@ local function handle_query_json(task, conn)
 
   local maps_to_check = {}
   local report_misses = obj.report_misses
+  local one_shot = obj.one_shot
   local results = {}
 
   if obj.maps then
@@ -190,7 +204,10 @@ local function handle_query_json(task, conn)
 
   for _,key in ipairs(obj.values) do
     for uri,m in pairs(maps_to_check) do
-      check_specific_map(key, uri, m, results, report_misses)
+      local res = check_specific_map(key, uri, m, results, report_misses)
+      if one_shot and res then
+        break
+      end
     end
   end
   conn:send_ucl{
