@@ -157,6 +157,7 @@ end
 local query_json_schema = ts.shape{
   maps = ts.array_of(ts.string):is_optional(),
   one_shot = ts.boolean:is_optional(),
+  report_hit_indexes = ts.boolean:is_optional(),
   report_misses = ts.boolean:is_optional(),
   values = ts.array_of(ts.string),
 }
@@ -181,7 +182,9 @@ local function handle_query_json(task, conn)
   local maps_to_check = {}
   local report_misses = obj.report_misses
   local one_shot = obj.one_shot
+  local report_hit_indexes = obj.report_hit_indexes
   local results = {}
+  local hit_idx_h = {}
 
   if obj.maps then
     for _,mn in ipairs(obj.maps) do
@@ -202,17 +205,32 @@ local function handle_query_json(task, conn)
     maps_to_check = maps_cache
   end
 
-  for _,key in ipairs(obj.values) do
+  for idx,key in ipairs(obj.values) do
     for uri,m in pairs(maps_to_check) do
       local res = check_specific_map(key, uri, m, results, report_misses)
-      if one_shot and res then
-        break
+      if res then
+        if report_hit_indexes and res.hit then
+          hit_idx_h[idx] = true
+        end
+        if one_shot then
+          break
+        end
       end
     end
   end
+
+  local hit_report
+  if report_hit_indexes then
+    hit_report = {}
+    for k in pairs(hit_idx_h) do
+      table.insert(hit_report, k)
+    end
+  end
+
   conn:send_ucl{
     success = (#results > 0),
-    results = results
+    results = results,
+    hit_indexes = hit_report,
   }
 end
 
