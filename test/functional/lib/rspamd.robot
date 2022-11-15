@@ -140,11 +140,15 @@ Expect Symbol With Score And Exact Options
   Expect Symbol With Exact Options  ${symbol}  @{options}
   Expect Symbol With Score  ${symbol}  ${score}
 
-Export Rspamd Variables To Environment
+Set Rspamd Variables To List
+  @{res} =  @{EMPTY}
   &{all_vars} =  Get Variables  no_decoration=True
   FOR  ${k}  ${v}  IN  &{all_vars}
-    Run Keyword If  '${k}'.startswith("RSPAMD_")  Set Environment Variable  ${k}  ${v}
+    Continue For Loop If  not '${k}'.startswith("RSPAMD_")
+    ${bare_name} =  Evaluate  '${k}'.replace("RSPAMD_","",1)
+    Append To List  ${res}  --var=${bare_name}=${v}
   END
+  [Return]  @{res}
 
 Export Scoped Variables
   [Arguments]  ${scope}  &{vars}
@@ -226,7 +230,7 @@ Run Redis
   Log  ${redis_log}
 
 Run Rspamd
-  Export Rspamd Variables To Environment
+  @{vars_cmdline} =  Set Rspamd Variables To List
 
   # Dump templated config or errors to log
   ${result} =  Run Process  ${RSPAMADM}  ${SET_LOCAL_CONFDIR}  configdump  -c  ${CONFIG}
@@ -241,7 +245,7 @@ Run Rspamd
 
   # Run Rspamd
   ${result} =  Run Process  ${RSPAMD}  ${SET_LOCAL_CONFDIR}  -u  ${RSPAMD_USER}  -g  ${RSPAMD_GROUP}
-  ...  -c  ${CONFIG}  env:TMPDIR=${RSPAMD_TMPDIR}  env:RSPAMD_DBDIR=${RSPAMD_TMPDIR}  env:DBDIR=${RSPAMD_TMPDIR}  env:LD_LIBRARY_PATH=${RSPAMD_TESTDIR}/../../contrib/aho-corasick
+  ...  -c  ${CONFIG}  ${vars_cmdline}  env:LD_LIBRARY_PATH=${RSPAMD_TESTDIR}/../../contrib/aho-corasick
   # We need to send output to files (or discard output) to avoid hanging Robot
   ...  stdout=${RSPAMD_TMPDIR}/rspamd.stdout  stderr=${RSPAMD_TMPDIR}/rspamd.stderr
 
