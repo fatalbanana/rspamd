@@ -14,6 +14,13 @@ local trigger = {
   },
 };
 
+local platform(arch) = {
+  platform: {
+    os: 'linux',
+    arch: arch,
+  },
+};
+
 local pipeline(arch) = {
   local rspamd_volumes = {
     volumes: [
@@ -23,11 +30,38 @@ local pipeline(arch) = {
       },
     ],
   },
-  name: 'default',
-  platform: {
-    os: 'linux',
-    arch: arch,
-  },
+  local send_coverage_step = {
+    name: 'send-coverage',
+    image: 'nerfd/ci:ubuntu-test',
+    pull: 'if-not-exists',
+    depends_on: [
+      'functional',
+      'rspamd-test',
+    ],
+    commands: [
+      'cd /rspamd/build',
+      '$DRONE_WORKSPACE/test/tools/gcov_coveralls.py --exclude test --prefix /rspamd/build --prefix $DRONE_WORKSPACE --out coverage.c.json',
+      'luacov-coveralls -o coverage.functional.lua.json --dryrun',
+      '$DRONE_WORKSPACE/test/tools/merge_coveralls.py --root $DRONE_WORKSPACE --input coverage.c.json unit_test_lua.json coverage.functional.lua.json --token=$COVERALLS_REPO_TOKEN',
+    ],
+    environment: {
+      COVERALLS_REPO_TOKEN: {
+        from_secret: 'coveralls_repo_token',
+      },
+    },
+    when: {
+      branch: [
+        'master',
+      ],
+      event: [
+        'push',
+        'tag',
+      ],
+    },
+  } + rspamd_volumes,
+  local send_coverage = if(arch) == "amd64" then [send_coverage_step] else [],
+  local hyperscan_altroot = if(arch) == "amd64" then '' else '-DHYPERSCAN_ROOT_DIR=/vectorscan',
+  name: 'default-' + arch,
   steps: [
     {
       name: 'prepare',
@@ -39,7 +73,7 @@ local pipeline(arch) = {
     } + rspamd_volumes,
     {
       name: 'build',
-      image: 'rspamd/ci:ubuntu-build',
+      image: 'nerfd/ci:ubuntu-build',
       pull: 'always',
       depends_on: [
         'prepare',
@@ -47,7 +81,7 @@ local pipeline(arch) = {
       commands: [
         'test "$(id -un)" = nobody',
         'cd /rspamd/build',
-        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/install -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_COVERAGE=ON -DENABLE_LIBUNWIND=ON -DENABLE_HYPERSCAN=ON -GNinja $DRONE_WORKSPACE\n',
+        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/install -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_COVERAGE=ON -DENABLE_LIBUNWIND=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -GNinja $DRONE_WORKSPACE\n',
         'ncpu=$(getconf _NPROCESSORS_ONLN)',
         'ninja -j $ncpu install',
         'ninja -j $ncpu rspamd-test',
@@ -56,7 +90,7 @@ local pipeline(arch) = {
     } + rspamd_volumes,
     {
       name: 'build-clang',
-      image: 'rspamd/ci:fedora-build',
+      image: 'nerfd/ci:fedora-build',
       pull: 'always',
       depends_on: [
         'prepare',
@@ -66,7 +100,7 @@ local pipeline(arch) = {
         'cd /rspamd/fedora/build',
         "export LDFLAGS='-fuse-ld=lld'",
         'export ASAN_OPTIONS=detect_leaks=0',
-        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/fedora/install -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_CLANG_PLUGIN=ON -DENABLE_FULL_DEBUG=ON -DENABLE_HYPERSCAN=ON -DSANITIZE=address $DRONE_WORKSPACE\n',
+        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/fedora/install -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_CLANG_PLUGIN=ON -DENABLE_FULL_DEBUG=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -DSANITIZE=address $DRONE_WORKSPACE\n',
         'ncpu=$(getconf _NPROCESSORS_ONLN)',
         'make -j $ncpu install',
         'make -j $ncpu rspamd-test',
@@ -75,7 +109,7 @@ local pipeline(arch) = {
     } + rspamd_volumes,
     {
       name: 'rspamd-test',
-      image: 'rspamd/ci:ubuntu-test',
+      image: 'nerfd/ci:ubuntu-test',
       pull: 'always',
       depends_on: [
         'build',
@@ -98,7 +132,7 @@ local pipeline(arch) = {
     } + rspamd_volumes,
     {
       name: 'test-fedora-clang',
-      image: 'rspamd/ci:fedora-test',
+      image: 'nerfd/ci:fedora-test',
       pull: 'always',
       depends_on: [
         'build-clang',
@@ -124,7 +158,7 @@ local pipeline(arch) = {
     } + rspamd_volumes,
     {
       name: 'functional',
-      image: 'rspamd/ci:ubuntu-test-func',
+      image: 'nerfd/ci:ubuntu-test-func',
       pull: 'always',
       depends_on: [
         'build',
@@ -148,35 +182,29 @@ local pipeline(arch) = {
         },
       },
     } + rspamd_volumes,
+  ] + send_coverage,
+  volumes: [
     {
-      name: 'send-coverage',
-      image: 'rspamd/ci:ubuntu-test',
+      name: 'rspamd',
+      temp: {},
+    },
+  ],
+} + platform(arch) + trigger + docker_pipeline;
+
+local noarch_pipeline = {
+  name: 'default-noarch',
+  steps: [
+    {
+      name: 'perl-tidyall',
+      image: 'nerfd/ci:perl-tidyall',
       pull: 'if-not-exists',
-      depends_on: [
-        'functional',
-        'rspamd-test',
-      ],
+      failure: 'ignore',
       commands: [
-        'cd /rspamd/build',
-        '$DRONE_WORKSPACE/test/tools/gcov_coveralls.py --exclude test --prefix /rspamd/build --prefix $DRONE_WORKSPACE --out coverage.c.json',
-        'luacov-coveralls -o coverage.functional.lua.json --dryrun',
-        '$DRONE_WORKSPACE/test/tools/merge_coveralls.py --root $DRONE_WORKSPACE --input coverage.c.json unit_test_lua.json coverage.functional.lua.json --token=$COVERALLS_REPO_TOKEN',
+        'tidyall --version',
+        'perltidy --version | head -1',
+        'tidyall --all --check-only --no-cache --data-dir /tmp/tidyall',
       ],
-      environment: {
-        COVERALLS_REPO_TOKEN: {
-          from_secret: 'coveralls_repo_token',
-        },
-      },
-      when: {
-        branch: [
-          'master',
-        ],
-        event: [
-          'push',
-          'tag',
-        ],
-      },
-    } + rspamd_volumes,
+    },
     {
       name: 'eslint',
       image: 'node:18-alpine',
@@ -191,29 +219,22 @@ local pipeline(arch) = {
         './node_modules/.bin/stylelint ./**/*.css ./**/*.html ./**/*.js',
       ],
     },
-    {
-      name: 'perl-tidyall',
-      image: 'rspamd/ci:perl-tidyall',
-      pull: 'if-not-exists',
-      failure: 'ignore',
-      commands: [
-        'tidyall --version',
-        'perltidy --version | head -1',
-        'tidyall --all --check-only --no-cache --data-dir /tmp/tidyall',
-      ],
-    },
+  ],
+} + trigger + docker_pipeline;
+
+// FIXME: not triggered when needed
+local reporting_pipeline = {
+  name: 'reporting',
+  depends_on: [
+    'default-amd64',
+    'default-arm64',
+    'default-noarch',
+  ],
+  steps: [
     {
       name: 'notify',
       image: 'drillster/drone-email',
       pull: 'if-not-exists',
-      depends_on: [
-        'rspamd-test',
-        'test-fedora-clang',
-        'functional',
-        'send-coverage',
-        'eslint',
-        'perl-tidyall',
-      ],
       settings: {
         from: 'noreply@rspamd.com',
         host: {
@@ -233,12 +254,6 @@ local pipeline(arch) = {
       },
     },
   ],
-  volumes: [
-    {
-      name: 'rspamd',
-      temp: {},
-    },
-  ],
 } + trigger + docker_pipeline;
 
 local signature = {
@@ -248,5 +263,8 @@ local signature = {
 
 [
   pipeline('amd64'),
+  pipeline('arm64'),
+  noarch_pipeline,
+  reporting_pipeline,
   signature,
 ]
