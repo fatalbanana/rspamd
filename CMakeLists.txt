@@ -466,14 +466,13 @@ int main(int argc, char **argv) {
 
 IF (NOT HAVE_ATOMIC_BUILTINS)
     MESSAGE(STATUS "atomic builtins are -NOT- supported")
+    CHECK_LIBRARY_EXISTS(atomic __atomic_fetch_add_4 "" HAVE_LIBATOMIC)
+    IF (HAVE_LIBATOMIC)
+        list(APPEND CMAKE_REQUIRED_LIBRARIES "atomic")
+    endif ()
 ELSE ()
     MESSAGE(STATUS "atomic builtins are supported")
 ENDIF ()
-
-CHECK_LIBRARY_EXISTS(atomic __atomic_fetch_add_4 "" HAVE_LIBATOMIC)
-IF (HAVE_LIBATOMIC)
-    list(APPEND CMAKE_REQUIRED_LIBRARIES "atomic")
-endif ()
 
 
 CHECK_C_SOURCE_RUNS("
