@@ -81,7 +81,7 @@ local pipeline(arch) = {
       commands: [
         'test "$(id -un)" = nobody',
         'cd /rspamd/build',
-        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/install -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_COVERAGE=ON -DENABLE_LIBUNWIND=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -GNinja $DRONE_WORKSPACE\n',
+        'cmake -DENABLE_SNOWBALL=ON -DCMAKE_INSTALL_PREFIX=/rspamd/install -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_COVERAGE=ON -DENABLE_LIBUNWIND=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -GNinja $DRONE_WORKSPACE\n',
         'ncpu=$(getconf _NPROCESSORS_ONLN)',
         'ninja -j $ncpu install',
         'ninja -j $ncpu rspamd-test',
@@ -100,7 +100,7 @@ local pipeline(arch) = {
         'cd /rspamd/fedora/build',
         "export LDFLAGS='-fuse-ld=lld'",
         'export ASAN_OPTIONS=detect_leaks=0',
-        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/fedora/install -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_CLANG_PLUGIN=ON -DENABLE_FULL_DEBUG=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -DSANITIZE=address $DRONE_WORKSPACE\n',
+        'cmake -DENABLE_SNOWBALL=ON -DCMAKE_INSTALL_PREFIX=/rspamd/fedora/install -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_CLANG_PLUGIN=ON -DENABLE_FULL_DEBUG=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -DSANITIZE=address $DRONE_WORKSPACE\n',
         'ncpu=$(getconf _NPROCESSORS_ONLN)',
         'make -j $ncpu install',
         'make -j $ncpu rspamd-test',
