@@ -562,4 +562,9 @@ The first argument must be header name.]],
   },
 }
 
+if rspamd_env.AMI_KEY then
+  local configure_ami_extractors = require "lua_selectors/ami_extractors"
+  configure_ami_extractors(extractors)
+end
+
 return extractors
