@@ -193,7 +193,7 @@ local pipeline(arch) = {
         'ulimit -c unlimited',
         'ulimit -s unlimited',
         'set +e',
-        'RSPAMD_INSTALLROOT=/rspamd/install robot --removekeywords wuks --exclude isbroken $DRONE_WORKSPACE/test/functional/cases; EXIT_CODE=$?',
+        'RSPAMD_INSTALLROOT=/rspamd/install robot -s 410_systemd_logger --removekeywords wuks --exclude isbroken $DRONE_WORKSPACE/test/functional/cases; EXIT_CODE=$?',
         'set -e',
         'if [ -n "$HTTP_PUT_AUTH" ]; then $DRONE_WORKSPACE/test/tools/http_put.py log.html report.html https://$DRONE_SYSTEM_HOSTNAME/testlogs/$DRONE_REPO/${DRONE_BUILD_NUMBER}-' + arch + '/; fi\n',
         "core_files=$(find /var/tmp/ -name '*.core')",
