@@ -15,6 +15,7 @@ EMPTY TEST
 
 *** Keywords ***
 Systemd Teardown
+  Touch  ${RSPAMD_TMPDIR}/rspamd.log
   Rspamd Teardown
   ${config} =  Get File  ${EXECDIR}/robot-save/configdump.stdout.last
   Log To Console  WTF ${config}
