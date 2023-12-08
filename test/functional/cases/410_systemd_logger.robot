@@ -19,4 +19,4 @@ Systemd Teardown
   ${config} =  Get File  ${EXECDIR}/robot-save/configdump.stdout.last
   Log To Console  WTF ${config}
   ${log} =  Get File  ${EXECDIR}/robot-save/rspamd.stderr.last
-  Should Match Regexp  ${log}  \n\(main\) lua; lua_cfg_transform\.lua:\d+: overriding actions from the legacy metric settings\n
+  Should Match Regexp  ${log}  \\n\\(main\\) lua; lua_cfg_transform\\.lua:\\d+: overriding actions from the legacy metric settings\\n
