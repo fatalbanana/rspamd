@@ -6,7 +6,7 @@ Resource        ${RSPAMD_TESTDIR}/lib/rspamd.robot
 Variables       ${RSPAMD_TESTDIR}/lib/vars.py
 
 *** Variables ***
-${CONFIG}                         ${RSPAMD_TESTDIR}/configs/trivial.conf
+${CONFIG}                         ${RSPAMD_TESTDIR}/configs/systemd.conf
 ${RSPAMD_SCOPE}                   Suite
 
 *** Test Cases ***
@@ -16,7 +16,7 @@ EMPTY TEST
 *** Keywords ***
 Systemd Teardown
   Rspamd Teardown
-  ${config} =  Get File  ${EXECDIR}/robot-save/rspamd.configdump.last
+  ${config} =  Get File  ${EXECDIR}/robot-save/configdump.stdout.last
   Log To Console  WTF ${config}
   ${log} =  Get File  ${EXECDIR}/robot-save/rspamd.stderr.last
-  Should Match Regexp  ${log}  ^[0-9]{4}-[0-9]{2}-[0-9]{2} #[0-9]+(main) <[0-9a-f]+>; main; main: rspamd 0-9]+\.[0-9]+\.[0-9]+ is loading configuration, build id: release\n
+  Should Match Regexp  ${log}  \n\(main\) lua; lua_cfg_transform\.lua:\d+: overriding actions from the legacy metric settings\n
