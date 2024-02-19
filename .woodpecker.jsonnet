@@ -106,7 +106,7 @@ local pipeline(arch) = {
       commands: [
         'test "$(id -un)" = nobody',
         'cd /rspamd/build',
-        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/install -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_COVERAGE=ON -DENABLE_LIBUNWIND=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -GNinja $DRONE_WORKSPACE\n',
+        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/install -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_COVERAGE=ON -DENABLE_LIBUNWIND=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -GNinja $CI_WORKSPACE\n',
         'ncpu=$(getconf _NPROCESSORS_ONLN)',
         'ninja -j $ncpu install',
         'ninja -j $ncpu rspamd-test',
@@ -125,7 +125,7 @@ local pipeline(arch) = {
         'cd /rspamd/fedora/build',
         "export LDFLAGS='-fuse-ld=lld'",
         'export ASAN_OPTIONS=detect_leaks=0',
-        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/fedora/install -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_CLANG_PLUGIN=ON -DENABLE_FULL_DEBUG=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -DSANITIZE=address $DRONE_WORKSPACE\n',
+        'cmake -DCMAKE_INSTALL_PREFIX=/rspamd/fedora/install -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_CLANG_PLUGIN=ON -DENABLE_FULL_DEBUG=ON -DENABLE_HYPERSCAN=ON ' + hyperscan_altroot + ' -DSANITIZE=address $CI_WORKSPACE\n',
         'ncpu=$(getconf _NPROCESSORS_ONLN)',
         'make -j $ncpu install',
         'make -j $ncpu rspamd-test',
@@ -193,9 +193,9 @@ local pipeline(arch) = {
         'ulimit -c unlimited',
         'ulimit -s unlimited',
         'set +e',
-        'RSPAMD_INSTALLROOT=/rspamd/install robot --removekeywords wuks --exclude isbroken $DRONE_WORKSPACE/test/functional/cases; EXIT_CODE=$?',
+        'RSPAMD_INSTALLROOT=/rspamd/install robot --removekeywords wuks --exclude isbroken $CI_WORKSPACE/test/functional/cases; EXIT_CODE=$?',
         'set -e',
-        'if [ -n "$HTTP_PUT_AUTH" ]; then $DRONE_WORKSPACE/test/tools/http_put.py log.html report.html https://$DRONE_SYSTEM_HOSTNAME/testlogs/$DRONE_REPO/${DRONE_BUILD_NUMBER}-' + arch + '/; fi\n',
+        'if [ -n "$HTTP_PUT_AUTH" ]; then $CI_WORKSPACE/test/tools/http_put.py log.html report.html https://$CI_SYSTEM_HOST/testlogs/$CI_REPO/${CI_PIPELINE_NUMBER}-' + arch + '/; fi\n',
         "core_files=$(find /var/tmp/ -name '*.core')",
         "for core in $core_files; do exe=$(gdb --batch -ex 'info proc mappings' -c $core | tail -1 | awk '{print $5}'); gdb --batch -ex 'bt' -c $core $exe; echo '---'; done\n",
         'exit $EXIT_CODE',
@@ -216,9 +216,9 @@ local pipeline(arch) = {
       ],
       commands: [
         'cd /rspamd/build',
-        '$DRONE_WORKSPACE/test/tools/gcov_coveralls.py --exclude test --prefix /rspamd/build --prefix $DRONE_WORKSPACE --out coverage.c.json',
+        '$CI_WORKSPACE/test/tools/gcov_coveralls.py --exclude test --prefix /rspamd/build --prefix $CI_WORKSPACE --out coverage.c.json',
         'luacov-coveralls -o coverage.functional.lua.json --dryrun',
-        '$DRONE_WORKSPACE/test/tools/merge_coveralls.py --parallel --root $DRONE_WORKSPACE --input coverage.c.json unit_test_lua.json coverage.functional.lua.json --token=$COVERALLS_REPO_TOKEN',
+        '$CI_WORKSPACE/test/tools/merge_coveralls.py --parallel --root $CI_WORKSPACE --input coverage.c.json unit_test_lua.json coverage.functional.lua.json --token=$COVERALLS_REPO_TOKEN',
       ],
       environment: {
         COVERALLS_REPO_TOKEN: {
@@ -247,7 +247,7 @@ local close_coveralls = {
       image: 'rspamd/ci:ubuntu-test-func',
       pull: 'always',
       commands: [
-        '$DRONE_WORKSPACE/test/tools/merge_coveralls.py --parallel-close --token=$COVERALLS_REPO_TOKEN',
+        '$CI_WORKSPACE/test/tools/merge_coveralls.py --parallel-close --token=$COVERALLS_REPO_TOKEN',
       ],
       environment: {
         COVERALLS_REPO_TOKEN: {
@@ -295,16 +295,10 @@ local noarch_pipeline = {
   ],
 } + default_trigger + docker_pipeline;
 
-local signature = {
-  kind: 'signature',
-  hmac: '0000000000000000000000000000000000000000000000000000000000000000',
-};
-
 [
   pipeline('amd64'),
   pipeline('arm64'),
   close_coveralls,
   noarch_pipeline,
   notify_pipeline,
-  signature,
 ]
