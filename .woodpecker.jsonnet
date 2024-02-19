@@ -1,8 +1,3 @@
-local docker_pipeline = {
-  kind: 'pipeline',
-  type: 'docker',
-};
-
 local default_trigger_events_ex_pr = [
   'push',
   'tag',
@@ -72,7 +67,7 @@ local notify_pipeline = {
       'failure',
     ],
   },
-} + docker_pipeline;
+};
 
 local pipeline(arch) = {
   local rspamd_volumes = {
@@ -233,7 +228,7 @@ local pipeline(arch) = {
       temp: {},
     },
   ],
-} + platform(arch) + default_trigger + docker_pipeline;
+} + platform(arch) + default_trigger;
 
 local close_coveralls = {
   name: 'close_coveralls',
@@ -256,7 +251,7 @@ local close_coveralls = {
       },
     },
   ],
-} + close_coveralls_trigger + docker_pipeline;
+} + close_coveralls_trigger;
 
 local noarch_pipeline = {
   name: 'default-noarch',
@@ -293,7 +288,7 @@ local noarch_pipeline = {
       ],
     },
   ],
-} + default_trigger + docker_pipeline;
+} + default_trigger;
 
 [
   pipeline('amd64'),
