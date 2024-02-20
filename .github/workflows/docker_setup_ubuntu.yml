@@ -1,0 +1,12 @@
+name: setup_docker_ubuntu
+
+on:
+  workflow_call:
+
+jobs:
+  setup_docker:
+    steps:
+      - name: Refresh apt repos
+        run: apt-get update
+      - name: Install Docker
+        run: apt-get -y install docker.io
