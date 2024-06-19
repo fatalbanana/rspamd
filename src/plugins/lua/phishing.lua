@@ -637,6 +637,7 @@ if opts then
       type = 'virtual',
       parent = id,
       name = generic_service_symbol,
+      score = 0.0,
     })
 
     rspamd_config:register_symbol({
