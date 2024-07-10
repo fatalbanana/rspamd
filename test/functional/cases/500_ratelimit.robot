@@ -40,8 +40,8 @@ Basic Test
   Expect Action  soft reject
 
 *** Test Cases ***
-CHECK BUILTIN
-  Basic Test  ${EMPTY}  foobar@example.net  4
+#CHECK BUILTIN
+#  Basic Test  ${EMPTY}  foobar@example.net  4
 
-#CHECK SELECTOR
-#  Basic Test  foo@example.net  special@example.net  2
+CHECK SELECTOR
+  Basic Test  foo@example.net  special@example.net  2
