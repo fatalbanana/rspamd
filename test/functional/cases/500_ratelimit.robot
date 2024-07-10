@@ -32,7 +32,7 @@ Basic Test
   Basic Test Scan  ${from}  ${rcpt}
   Expect Action  soft reject
   # Should be able to send 1 message 1 second later
-  Sleep 1s
+  Sleep  1s
   Basic Test Scan  ${from}  ${rcpt}
   Expect Action  no action
   # Ratelimited again
