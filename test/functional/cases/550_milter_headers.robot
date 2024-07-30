@@ -22,3 +22,18 @@ CHECK HEADERS WITH TEST SYMBOL
   # Check My-Spamd-Bar header
   Expect Added Header  My-Spamd-Bar  ++
   Do Not Expect Removed Header  My-Spamd-Bar
+  # Check X-Spam-Level header
+  Expect Added Header  X-Spam-Level  **
+  Expect Removed Header  X-Spam-Level
+
+CHECK HEADERS WITHOUT TEST SYMBOL
+  Scan File  ${MESSAGE}  Settings=${SETTINGS_TEST}
+  # Check X-Virus header
+  Do Not Expect Removed Header  X-Virus
+  Do Not Expect Added Header  X-Virus
+  # Check My-Spamd-Bar header
+  Expect Added Header  My-Spamd-Bar  /
+  Do Not Expect Removed Header  My-Spamd-Bar
+  # Check X-Spam-Level header
+  Do Not Expect Added Header  X-Spam-Level
+  Expect Removed Header  X-Spam-Level
