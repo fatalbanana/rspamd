@@ -27,7 +27,7 @@ CHECK HEADERS WITH TEST SYMBOL
   Expect Removed Header  X-Spam-Level
 
 CHECK HEADERS WITHOUT TEST SYMBOL
-  Scan File  ${MESSAGE}  Settings=${SETTINGS_TEST}
+  Scan File  ${MESSAGE}  Settings=${SETTINGS_NOSYMBOLS}
   # Check X-Virus header
   Expect Removed Header  X-Virus
   Do Not Expect Added Header  X-Virus
