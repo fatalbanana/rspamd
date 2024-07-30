@@ -29,7 +29,7 @@ CHECK HEADERS WITH TEST SYMBOL
 CHECK HEADERS WITHOUT TEST SYMBOL
   Scan File  ${MESSAGE}  Settings=${SETTINGS_TEST}
   # Check X-Virus header
-  Do Not Expect Removed Header  X-Virus
+  Expect Removed Header  X-Virus
   Do Not Expect Added Header  X-Virus
   # Check My-Spamd-Bar header
   Expect Added Header  My-Spamd-Bar  /
