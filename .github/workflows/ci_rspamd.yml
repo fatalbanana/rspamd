@@ -23,17 +23,12 @@ jobs:
     steps:
       - name: Create directories
         run: |
-          sudo mkdir -p ${GITHUB_WORKSPACE}
-          sudo chown -R build:build ${GITHUB_WORKSPACE}
+          mkdir -p ${GITHUB_WORKSPACE}
 
       - name: Check out source code
         uses: actions/checkout@v4
         with:
           path: src
-
-      - name: Set variables on ARM64
-        if: runner.arch == 'ARM64'
-        run: echo "HYPERSCAN_ALTROOT=-DHYPERSCAN_ROOT_DIR=/vectorscan" >> "$GITHUB_ENV"
 
       - name: Run cmake
         run: |
@@ -58,7 +53,7 @@ jobs:
       - name: Apply Fedora specifics
         if: inputs.name == 'fedora-ci'
         run: |
-          sudo mv /usr/bin/miltertest /usr/bin/miltertest.is.broken.on.fedora || true
+          mv /usr/bin/miltertest /usr/bin/miltertest.is.broken.on.fedora || true
 
       - name: Run functional tests
         run: |
