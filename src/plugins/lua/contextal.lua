@@ -124,7 +124,9 @@ end
 
 local function process_cached(task, obj)
   if (obj[1] or E).actions then
-    task:disable_symbol(settings.action_symbol_prefix)
+    if not use_request_ttl then
+      task:disable_symbol(settings.action_symbol_prefix)
+    end
     return process_actions(task, obj, true)
   elseif (obj[1] or E).work_id then
     task:get_mempool():set_variable('contextal_work_id', obj[1].work_id)
