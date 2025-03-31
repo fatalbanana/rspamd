@@ -59,3 +59,7 @@ HTML ONLY - TRUE NEGATIVE
   Scan File  ${RSPAMD_TESTDIR}/messages/btc.eml
   ...  Settings={symbols_enabled = [MIME_HTML_ONLY]}
   Do Not Expect Symbol  MIME_HTML_ONLY
+
+TEST LARGE INPUT
+  ${large} =  Evaluate  "X" * 70_000_000
+  Scan Text  ${large}  500

@@ -193,14 +193,18 @@ def rspamc(addr, port, filename):
     return r.decode('utf-8')
 
 
-def Scan_File(filename, **headers):
+def Scan_File(filename, expectCode=200, **headers):
+    return Scan_Text(open(filename, "rb"), headers)
+
+
+def Scan_Text(message, expectCode=200, **headers):
     addr = BuiltIn().get_variable_value("${RSPAMD_LOCAL_ADDR}")
     port = BuiltIn().get_variable_value("${RSPAMD_PORT_NORMAL}")
     headers["Queue-Id"] = BuiltIn().get_variable_value("${TEST_NAME}")
     c = http.client.HTTPConnection("%s:%s" % (addr, port))
-    c.request("POST", "/checkv2", open(filename, "rb"), headers)
+    c.request("POST", "/checkv2", message, headers)
     r = c.getresponse()
-    assert r.status == 200
+    assert r.status == expectCode, "Got unexpected status code: %d (wanted %d)" % (r.status, expectCode)
     d = json.JSONDecoder(strict=True).decode(r.read().decode('utf-8'))
     c.close()
     BuiltIn().set_test_variable("${SCAN_RESULT}", d)
