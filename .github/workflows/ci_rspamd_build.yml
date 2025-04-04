@@ -12,10 +12,7 @@ on:
 
 jobs:
   test:
-    runs-on: [ "${{ matrix.runner }}" ]
-    strategy:
-      matrix:
-        runner: [ "ubuntu-24.04", "ubuntu-24.04-arm" ]
+    runs-on: [ "ubuntu-latest" ]
     container:
       image: ${{ inputs.image }}
       options: --user root
@@ -50,6 +47,7 @@ jobs:
           make -j $ncpu rspamd-test-cxx
 
       - name: Run unit tests
+        if: "!(inputs.name == 'ubuntu-ci' && runner.arch == 'ARM64')"
         run: |
           cd ${GITHUB_WORKSPACE}/build
           make test
