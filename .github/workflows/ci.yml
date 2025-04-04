@@ -17,12 +17,21 @@ jobs:
     with:
       image: ghcr.io/rspamd/rspamd-build-docker:fedora-ci
       name: fedora-ci
+      runner: ubuntu-24.04
 
   ubuntu:
     uses: ./.github/workflows/ci_rspamd.yml
     with:
       image: ghcr.io/rspamd/rspamd-build-docker:ubuntu-ci
       name: ubuntu-ci
+      runner: ubuntu-24.04
+
+  ubuntu_arm64:
+    uses: ./.github/workflows/ci_rspamd.yml
+    with:
+      image: ghcr.io/rspamd/rspamd-build-docker:ubuntu-ci
+      name: ubuntu-ci
+      runner: ubuntu-24.04-arm
 
   ubuntu-focal:
     uses: ./.github/workflows/ci_rspamd_build.yml

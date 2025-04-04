@@ -9,6 +9,9 @@ on:
       name:
         required: true
         type: string
+      runner:
+        required: true
+        type: string
 
 env:
   CTEST_OUTPUT_ON_FAILURE: 1
@@ -16,7 +19,7 @@ env:
 
 jobs:
   test:
-    runs-on: [ "ubuntu-latest" ]
+    runs-on: [ "${{ inputs.runner }}" ]
     container:
       image: ${{ inputs.image }}
       options: --user root
