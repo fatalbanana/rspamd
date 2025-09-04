@@ -342,72 +342,20 @@ local function calculate_redis_hash(params)
   return h:base32()
 end
 
+local default_redis_opts = {
+  expand_keys = false,
+  timeout = 1.0,
+}
+
 local function process_redis_opts(options, redis_params)
-  local default_timeout = 1.0
-  local default_expand_keys = false
+  redis_params = lutil.override_defaults(default_redis_opts, lutil.override_defaults(options, redis_params))
 
-  if not redis_params['timeout'] or redis_params['timeout'] == default_timeout then
-    if options['timeout'] then
-      redis_params['timeout'] = tonumber(options['timeout'])
-    else
-      redis_params['timeout'] = default_timeout
-    end
-  end
+  redis_params.timeout = redis_params.timeout and tonumber(redis_params.timeout)
+  redis_params.version = redis_params.version and tonumber(redis_params.version)
 
-  if options['prefix'] and not redis_params['prefix'] then
-    redis_params['prefix'] = options['prefix']
-  end
-
-  if options['redis_version'] and not redis_params['redis_version'] then
-    redis_params['redis_version'] = tonumber(options['redis_version'])
-  end
-
-  if type(options['expand_keys']) == 'boolean' then
-    redis_params['expand_keys'] = options['expand_keys']
-  else
-    redis_params['expand_keys'] = default_expand_keys
-  end
-
-  if not redis_params['db'] then
-    if options['db'] then
-      redis_params['db'] = tostring(options['db'])
-    elseif options['dbname'] then
-      redis_params['db'] = tostring(options['dbname'])
-    elseif options['database'] then
-      redis_params['db'] = tostring(options['database'])
-    end
-  end
-  if options['username'] and not redis_params['username'] then
-    redis_params['username'] = options['username']
-  end
-  if options['password'] and not redis_params['password'] then
-    redis_params['password'] = options['password']
-  end
-
-  if not redis_params.sentinels and options.sentinels then
-    redis_params.sentinels = options.sentinels
-  end
-
-  if options['sentinel_masters_pattern'] and not redis_params['sentinel_masters_pattern'] then
-    redis_params['sentinel_masters_pattern'] = options['sentinel_masters_pattern']
-  end
-
-  if options['sentinel_watch_time'] and not redis_params['sentinel_watch_time'] then
-    redis_params['sentinel_watch_time'] = options['sentinel_watch_time']
-  end
-
-  if options['sentinel_username'] and not redis_params['sentinel_username'] then
-    redis_params['sentinel_username'] = options['sentinel_username']
-  end
-
-  if options['sentinel_password'] and not redis_params['sentinel_password'] then
-    redis_params['sentinel_password'] = options['sentinel_password']
-  end
-
-  if options['sentinel_master_maxerrors'] and not redis_params['sentinel_master_maxerrors'] then
-    redis_params['sentinel_master_maxerrors'] = options['sentinel_master_maxerrors']
-  end
-
+  redis_params.db = redis_params.db and tostring(redis_params.db)
+      or redis_params.dbname and tostring(redis_params.dbname)
+      or redis_params.database and tostring(redis_params.database)
 end
 
 local function enrich_defaults(rspamd_config, module, redis_params)
@@ -1688,8 +1636,6 @@ exports.redis_connect_sync = redis_connect_sync
 --]]
 
 exports.request = function(redis_params, attrs, req)
-  local lua_util = require "lua_util"
-
   if not attrs or not redis_params or not req then
     logger.errx('invalid arguments for redis request')
     return false, nil, nil
@@ -1700,7 +1646,7 @@ exports.request = function(redis_params, attrs, req)
     return false, nil, nil
   end
 
-  local opts = lua_util.shallowcopy(attrs)
+  local opts = lutil.shallowcopy(attrs)
 
   local log_obj = opts.task or opts.config
 
@@ -1801,8 +1747,6 @@ end
 --]]
 
 exports.connect = function(redis_params, attrs)
-  local lua_util = require "lua_util"
-
   if not attrs or not redis_params then
     logger.errx('invalid arguments for redis connect')
     return false, nil, nil
@@ -1813,7 +1757,7 @@ exports.connect = function(redis_params, attrs)
     return false, nil, nil
   end
 
-  local opts = lua_util.shallowcopy(attrs)
+  local opts = lutil.shallowcopy(attrs)
 
   local log_obj = opts.task or opts.config
 
