@@ -24,6 +24,13 @@ jobs:
       image: ghcr.io/rspamd/rspamd-build-docker:ubuntu-ci
       name: ubuntu-ci-amd64
 
+  ubuntu_amd64_nohyperscan:
+    uses: ./.github/workflows/ci_rspamd.yml
+    with:
+      image: ghcr.io/rspamd/rspamd-build-docker:ubuntu-ci
+      name: ubuntu-ci-amd64
+      hyperscan: false
+
   ubuntu_arm64:
     if: ${{ !vars.NO_ARM }}
     uses: ./.github/workflows/ci_rspamd.yml
@@ -31,6 +38,15 @@ jobs:
       image: ghcr.io/rspamd/rspamd-build-docker:ubuntu-ci
       name: ubuntu-ci-arm64
       runner: ${{ vars.ARM_RUNNER || 'ubuntu-24.04-arm' }}
+
+  ubuntu_arm64_nohyperscan:
+    if: ${{ !vars.NO_ARM }}
+    uses: ./.github/workflows/ci_rspamd.yml
+    with:
+      image: ghcr.io/rspamd/rspamd-build-docker:ubuntu-ci
+      name: ubuntu-ci-arm64
+      runner: ${{ vars.ARM_RUNNER || 'ubuntu-24.04-arm' }}
+      hyperscan: false
 
   ubuntu-focal:
     uses: ./.github/workflows/ci_rspamd_build.yml
