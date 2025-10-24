@@ -86,7 +86,7 @@ jobs:
         if: (success() || failure())
         uses: actions/upload-artifact@v4
         with:
-          name: robotlog-${{ inputs.name }}
+          name: robotlog-${{ inputs.name }}${{ inputs.hyperscan || '-nohyperscan' }}
           path: |
             ${{ env.CONTAINER_WORKSPACE }}/build/*.*ml
           retention-days: 1
@@ -95,7 +95,7 @@ jobs:
         if: (success() || failure())
         uses: actions/upload-artifact@v4
         with:
-          name: rspamdlog-${{ inputs.name }}
+          name: rspamdlog-${{ inputs.name }}${{ inputs.hyperscan || '-nohyperscan' }}
           path: ${{ env.CONTAINER_WORKSPACE }}/build/robot-save
           retention-days: 1
 
@@ -103,6 +103,6 @@ jobs:
         if: inputs.name == 'ubuntu-ci-amd64'
         uses: actions/upload-artifact@v4
         with:
-          name: rspamd-binary-${{ inputs.name }}
+          name: rspamd-binary-${{ inputs.name }}${{ inputs.hyperscan || '-nohyperscan' }}
           path: ${{ github.workspace }}/install
           retention-days: 1
