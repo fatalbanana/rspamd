@@ -12,6 +12,9 @@ on:
       runner:
         type: string
         default: 'ubuntu-24.04'
+      enable_luajit:
+        type: boolean
+        default: true
 
 env:
   CTEST_OUTPUT_ON_FAILURE: 1
@@ -34,15 +37,33 @@ jobs:
         with:
           path: src
 
+      - name: Install Lua 5.4
+        if: inputs.enable_luajit == false
+        run: |
+          if [[ "${{ inputs.image }}" == *"fedora"* ]] || [[ "${{ inputs.image }}" == *"centos"* ]]; then
+            dnf install -y lua lua-devel
+          else
+            apt-get update
+            apt-get install -y lua5.4 liblua5.4-dev
+          fi
+
       - name: Set variables on ARM64
         if: runner.arch == 'ARM64'
         run: echo "HYPERSCAN_ALTROOT=-DHYPERSCAN_ROOT_DIR=/vectorscan" >> "$GITHUB_ENV"
+
+      - name: Set LuaJIT flag
+        run: |
+          if [ "${{ inputs.enable_luajit }}" = "false" ]; then
+            echo "LUAJIT_FLAG=-DENABLE_LUAJIT=OFF" >> "$GITHUB_ENV"
+          else
+            echo "LUAJIT_FLAG=" >> "$GITHUB_ENV"
+          fi
 
       - name: Run cmake
         run: |
           mkdir ${GITHUB_WORKSPACE}/build
           cd ${GITHUB_WORKSPACE}/build
-          cmake -DCMAKE_INSTALL_PREFIX=${GITHUB_WORKSPACE}/install -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_COVERAGE=ON -DENABLE_LIBUNWIND=ON -DENABLE_HYPERSCAN=ON ${{ env.HYPERSCAN_ALTROOT }} -GNinja ${GITHUB_WORKSPACE}/src
+          cmake -DCMAKE_INSTALL_PREFIX=${GITHUB_WORKSPACE}/install -DCMAKE_RULE_MESSAGES=OFF -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_COVERAGE=ON -DENABLE_LIBUNWIND=ON -DENABLE_HYPERSCAN=ON ${{ env.HYPERSCAN_ALTROOT }} ${{ env.LUAJIT_FLAG }} -GNinja ${GITHUB_WORKSPACE}/src
 
       - name: Build rspamd
         run: |
