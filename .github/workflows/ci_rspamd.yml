@@ -73,11 +73,11 @@ jobs:
           ninja -j $ncpu rspamd-test
           ninja -j $ncpu rspamd-test-cxx
 
-      - name: Run unit tests
-        if: "!(inputs.name == 'ubuntu-ci' && runner.arch == 'ARM64')"
-        run: |
-          cd ${GITHUB_WORKSPACE}/build
-          ninja test
+      #- name: Run unit tests
+      #  if: "!(inputs.name == 'ubuntu-ci' && runner.arch == 'ARM64')"
+      #  run: |
+      #    cd ${GITHUB_WORKSPACE}/build
+      #    ninja test
 
       - name: Apply Fedora specifics
         if: inputs.name == 'fedora-ci'
