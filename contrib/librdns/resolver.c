@@ -946,7 +946,7 @@ rdns_process_tcp_write(int fd, struct rdns_io_channel *ioc)
 				return;
 			}
 		}
-		else if (ntohs(oc->next_write_size) < oc->cur_write) {
+		else if (ntohs(oc->next_write_size) + sizeof(oc->next_write_size) <= oc->cur_write) {
 			/* Packet has been fully written, remove it */
 			DL_DELETE(ioc->tcp->output_chain, oc);
 			free(oc); /* It also frees write buf */
