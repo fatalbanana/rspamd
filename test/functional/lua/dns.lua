@@ -51,3 +51,36 @@ rspamd_config:register_symbol({
   score = 1.0,
   callback = dns_symbol,
 })
+
+
+-- DNS over TCP test with large TXT record
+local function dns_tcp_symbol(task)
+  local function dns_tcp_cb(_, to_resolve, results, err)
+    logger.errx(task, "DNS TCP: _=%1, to_resolve=%2, results=%3, err=%4", _, to_resolve, results, err)
+    if err then
+      task:insert_result('DNS_TCP_ERROR', 1.0, err)
+    else
+      -- Just check we got results back, don't validate the exact content
+      -- as it may change over time
+      if results and #results > 0 then
+        task:insert_result('DNS_TCP', 1.0, string.format('%d records', #results))
+      else
+        task:insert_result('DNS_TCP_EMPTY', 1.0)
+      end
+    end
+  end
+
+  local to_resolve = tostring(task:get_request_header('to-resolve'))
+
+  task:get_resolver():resolve_txt({
+    task = task,
+    name = to_resolve,
+    callback = dns_tcp_cb
+  })
+end
+
+rspamd_config:register_symbol({
+  name = 'SIMPLE_DNS_TCP',
+  score = 1.0,
+  callback = dns_tcp_symbol,
+})

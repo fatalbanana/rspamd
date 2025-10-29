@@ -6,6 +6,7 @@ Variables       ${RSPAMD_TESTDIR}/lib/vars.py
 *** Variables ***
 ${MESSAGE}            ${RSPAMD_TESTDIR}/messages/spam_message.eml
 ${SETTINGS_DNS}       {symbols_enabled = [SIMPLE_DNS, SIMPLE_DNS_SYNC]}
+${SETTINGS_DNS_TCP}   {symbols_enabled = [SIMPLE_DNS_TCP]}
 
 *** Test Cases ***
 Simple DNS request
@@ -19,3 +20,8 @@ Faulty DNS request
   ...  Settings=${SETTINGS_DNS}
   Expect Symbol With Exact Options  DNS_SYNC_ERROR  requested record is not found
   Expect Symbol With Exact Options  DNS_ERROR  requested record is not found
+
+DNS over TCP with large TXT record
+  Scan File  ${MESSAGE}  To-Resolve=github.com
+  ...  Settings=${SETTINGS_DNS_TCP}
+  Expect Symbol  DNS_TCP
