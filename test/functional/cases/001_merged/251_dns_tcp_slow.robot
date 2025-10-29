@@ -7,11 +7,9 @@ Resource         ${RSPAMD_TESTDIR}/lib/rspamd.robot
 Variables        ${RSPAMD_TESTDIR}/lib/vars.py
 
 *** Variables ***
-${CONFIG}              ${RSPAMD_TESTDIR}/configs/dns_slow.conf
 ${MESSAGE}             ${RSPAMD_TESTDIR}/messages/spam_message.eml
 ${SETTINGS_DNS_SLOW}   {symbols_enabled = [SIMPLE_DNS_TCP_SLOW]}
 ${DNS_SLOW_PORT}       15353
-${RSPAMD_SCOPE}        Suite
 
 *** Test Cases ***
 # Test DNS over TCP with slow custom server that triggers partial writes
@@ -27,10 +25,8 @@ DNS over TCP with slow server triggering partial writes
 *** Keywords ***
 DNS TCP Slow Suite Setup
   Run Dummy DNS Slow
-  Rspamd Setup
 
 DNS TCP Slow Suite Teardown
-  Rspamd Teardown
   Dummy DNS Slow Teardown
 
 Run Dummy DNS Slow
