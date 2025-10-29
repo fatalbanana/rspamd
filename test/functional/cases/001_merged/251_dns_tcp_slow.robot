@@ -27,10 +27,8 @@ DNS over TCP with slow server triggering partial writes
 *** Keywords ***
 DNS TCP Slow Suite Setup
   Run Dummy DNS Slow
-  Rspamd Setup
 
 DNS TCP Slow Suite Teardown
-  Rspamd Teardown
   Dummy DNS Slow Teardown
 
 Run Dummy DNS Slow
