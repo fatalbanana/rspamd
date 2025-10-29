@@ -1,6 +1,6 @@
 *** Settings ***
-Suite Setup      DNS TCP Slow Setup
-Suite Teardown   DNS TCP Slow Teardown
+Suite Setup      DNS TCP Slow Suite Setup
+Suite Teardown   DNS TCP Slow Suite Teardown
 Test Setup       Rspamd Setup
 Test Teardown    Rspamd Teardown
 Library          Process
@@ -13,6 +13,7 @@ ${CONFIG}              ${RSPAMD_TESTDIR}/configs/dns_slow.conf
 ${MESSAGE}             ${RSPAMD_TESTDIR}/messages/spam_message.eml
 ${SETTINGS_DNS_SLOW}   {symbols_enabled = [SIMPLE_DNS_TCP_SLOW]}
 ${DNS_SLOW_PORT}       15353
+${RSPAMD_SCOPE}        Suite
 
 *** Test Cases ***
 # Test DNS over TCP with slow custom server that triggers partial writes
@@ -26,16 +27,19 @@ DNS over TCP with slow server triggering partial writes
   Expect Symbol  DNS_TCP_SLOW
 
 *** Keywords ***
-DNS TCP Slow Setup
+DNS TCP Slow Suite Setup
   Run Dummy DNS Slow
   Rspamd Setup
 
-DNS TCP Slow Teardown
+DNS TCP Slow Suite Teardown
   Rspamd Teardown
-  Terminate Process  ${DUMMY_DNS_SLOW_PROC}
-  Wait For Process  ${DUMMY_DNS_SLOW_PROC}
+  Dummy DNS Slow Teardown
 
 Run Dummy DNS Slow
   ${result} =  Start Process  ${RSPAMD_TESTDIR}/util/dummy_dns_slow.py  ${DNS_SLOW_PORT}
   Wait Until Created  /tmp/dummy_dns_slow.pid  timeout=5s
   Set Suite Variable  ${DUMMY_DNS_SLOW_PROC}  ${result}
+
+Dummy DNS Slow Teardown
+  Terminate Process  ${DUMMY_DNS_SLOW_PROC}
+  Wait For Process  ${DUMMY_DNS_SLOW_PROC}
