@@ -105,7 +105,7 @@ source /opt/rh/gcc-toolset-10/enable
 %if 0%{?el9}
 source /opt/rh/gcc-toolset-12/enable
 %endif
-%if 0{?el10}
+%if 0%{?el10}
 source /usr/lib/gcc-toolset/15-env.source
 %endif
 
