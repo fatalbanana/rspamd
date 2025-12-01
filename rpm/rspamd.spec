@@ -21,18 +21,16 @@ BuildRequires:    cmake3
 BuildRequires:    devtoolset-10-gcc-c++
 %else
 BuildRequires:    cmake
+%endif
 %if 0%{?el8}
 BuildRequires:    gcc-toolset-10-gcc-c++
-%endif
-%if 0%{?el9}
+%elsif 0%{?el9}
 BuildRequires:    gcc-toolset-12-gcc-c++
-%endif
-%if 0%{?el9}
+%elsif 0%{?el10}
 BuildRequires:    gcc-toolset-15
 BuildRequires:    gcc-toolset-15-gcc-plugin-annobin
 %if 0%{getenv:ASAN}
 BuildRequires:    gcc-toolset-15-libasan-devel
-%endif
 %endif
 %endif
 BuildRequires:    file-devel
