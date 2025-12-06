@@ -73,11 +73,6 @@ jobs:
           cd ${GITHUB_WORKSPACE}/build
           ninja test
 
-      - name: Apply Fedora specifics
-        if: inputs.name == 'fedora-ci'
-        run: |
-          sudo mv /usr/bin/miltertest /usr/bin/miltertest.is.broken.on.fedora || true
-
       - name: Run functional tests
         run: |
           cd ${GITHUB_WORKSPACE}/build
