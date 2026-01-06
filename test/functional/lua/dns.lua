@@ -3,6 +3,7 @@ local logger = require "rspamd_logger"
 
 local function dns_sync_symbol(task)
   local to_resolve = tostring(task:get_request_header('to-resolve'))
+  if not to_resolve then return end
   local is_ok, results = rspamd_dns.request({
     task = task,
     type = 'a',
@@ -38,6 +39,7 @@ local function dns_symbol(task)
     end
   end
   local to_resolve = tostring(task:get_request_header('to-resolve'))
+  if not to_resolve then return end
 
   task:get_resolver():resolve_a({
     task = task,
