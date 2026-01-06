@@ -1165,6 +1165,10 @@ rdns_make_request_full(
 					req->reply->entries = fake_rep->result;
 					req->state = RDNS_REQUEST_FAKE;
 				}
+				else {
+					rdns_debug("DNS lookup %s (%s) does not have fake record configured",
+							   cur_name, rdns_str_from_type(type));
+				}
 			}
 
 			last_name = cur_name;
