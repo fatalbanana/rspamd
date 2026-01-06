@@ -150,6 +150,64 @@ rspamd_dns_callback(struct rdns_reply *reply, gpointer ud)
 
 	reqdata->reply = reply;
 
+	/* Log DNS query result */
+	const char *name = reqdata->req->requested_names[0].name;
+	enum rdns_request_type type = reqdata->req->requested_names[0].type;
+	
+	if (reply->code == RDNS_RC_NOERROR) {
+		/* Log successful response with entries */
+		struct rdns_reply_entry *entry;
+		int count = 0;
+		DL_COUNT(reply->entries, entry, count);
+		msg_debug("DNS query %s (%s) returned %d entries", 
+				  name, rdns_str_from_type(type), count);
+		
+		/* Log each entry */
+		DL_FOREACH(reply->entries, entry) {
+			switch (entry->type) {
+			case RDNS_REQUEST_A:
+				msg_debug("  A: %s", inet_ntoa(entry->content.a.addr));
+				break;
+			case RDNS_REQUEST_AAAA: {
+				char addr_buf[INET6_ADDRSTRLEN];
+				inet_ntop(AF_INET6, &entry->content.aaa.addr, addr_buf, sizeof(addr_buf));
+				msg_debug("  AAAA: %s", addr_buf);
+				break;
+			}
+			case RDNS_REQUEST_PTR:
+				msg_debug("  PTR: %s", entry->content.ptr.name);
+				break;
+			case RDNS_REQUEST_MX:
+				msg_debug("  MX: %d %s", entry->content.mx.priority, 
+						  entry->content.mx.name);
+				break;
+			case RDNS_REQUEST_TXT:
+				msg_debug("  TXT: %s", entry->content.txt.data);
+				break;
+			case RDNS_REQUEST_NS:
+				msg_debug("  NS: %s", entry->content.ns.name);
+				break;
+			case RDNS_REQUEST_SOA:
+				msg_debug("  SOA: %s %s %u %d %d %d %u",
+						  entry->content.soa.mname,
+						  entry->content.soa.admin,
+						  entry->content.soa.serial,
+						  entry->content.soa.refresh,
+						  entry->content.soa.retry,
+						  entry->content.soa.expire,
+						  entry->content.soa.minimum);
+				break;
+			default:
+				msg_debug("  UNKNOWN type: %d", entry->type);
+				break;
+			}
+		}
+	} else {
+		/* Log error response */
+		msg_debug("DNS query %s (%s) returned error: %s", 
+				  name, rdns_str_from_type(type), 
+				  rdns_strerror(reply->code));
+	}
 
 	if (reqdata->session) {
 		if (reply->code == RDNS_RC_SERVFAIL &&
@@ -157,7 +215,6 @@ rspamd_dns_callback(struct rdns_reply *reply, gpointer ud)
 			reqdata->task->resolver->fails_cache) {
 
 			/* Add to cache... */
-			const char *name = reqdata->req->requested_names[0].name;
 			char *target;
 			gsize namelen;
 			struct rspamd_dns_fail_cache_entry *nentry;
@@ -167,7 +224,7 @@ rspamd_dns_callback(struct rdns_reply *reply, gpointer ud)
 			nentry = g_malloc(sizeof(nentry) + namelen + 1);
 			target = ((char *) nentry) + sizeof(nentry);
 			rspamd_strlcpy(target, name, namelen + 1);
-			nentry->type = reqdata->req->requested_names[0].type;
+			nentry->type = type;
 			nentry->name = target;
 			nentry->namelen = namelen;
 

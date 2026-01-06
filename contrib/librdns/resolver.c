@@ -1164,6 +1164,8 @@ rdns_make_request_full(
 					req->reply = rdns_make_reply(req, fake_rep->rcode);
 					req->reply->entries = fake_rep->result;
 					req->state = RDNS_REQUEST_FAKE;
+					rdns_debug("DNS lookup %s (%s) has fake record configured",
+							   cur_name, rdns_str_from_type(type));
 				}
 				else {
 					rdns_debug("DNS lookup %s (%s) does not have fake record configured",
