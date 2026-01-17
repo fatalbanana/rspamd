@@ -1931,9 +1931,16 @@ rspamd_lua_traceback_string(lua_State *L, luaL_Buffer *buf)
 int rspamd_lua_traceback(lua_State *L)
 {
 	luaL_Buffer b;
+	/*
+	 * Lua 5.3+ luaL_buffinit may use the stack, so we must save the
+	 * error message position BEFORE initializing the buffer.
+	 * We use the absolute index to ensure the position is correct
+	 * regardless of stack manipulation by luaL_buffinit.
+	 */
+	int err_idx = lua_gettop(L);
 
 	luaL_buffinit(L, &b);
-	rspamd_lua_get_traceback_string(L, &b);
+	rspamd_lua_get_traceback_string_idx(L, &b, err_idx);
 	luaL_pushresult(&b);
 
 	return 1;
@@ -1941,11 +1948,16 @@ int rspamd_lua_traceback(lua_State *L)
 
 void rspamd_lua_get_traceback_string(lua_State *L, luaL_Buffer *buf)
 {
-	const char *msg = lua_tostring(L, -1);
+	rspamd_lua_get_traceback_string_idx(L, buf, lua_gettop(L));
+}
+
+void rspamd_lua_get_traceback_string_idx(lua_State *L, luaL_Buffer *buf, int err_idx)
+{
+	const char *msg = lua_tostring(L, err_idx);
 
 	if (msg) {
 		luaL_addstring(buf, msg);
-		lua_pop(L, 1); /* Error string */
+		lua_remove(L, err_idx); /* Error string */
 	}
 	else {
 		luaL_addstring(buf, "unknown error");

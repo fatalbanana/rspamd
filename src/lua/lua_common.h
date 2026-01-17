@@ -503,10 +503,20 @@ int rspamd_lua_traceback(lua_State *L);
 
 /**
 * Returns stack trace as a string. Caller should clear memory.
+* This version assumes error message is at stack top.
 * @param L
-* @return
+* @param buf
 */
 void rspamd_lua_get_traceback_string(lua_State *L, luaL_Buffer *buf);
+
+/**
+* Returns stack trace as a string with error message at specific index.
+* Use this when buffer operations may have modified the stack (e.g., after luaL_buffinit in Lua 5.3+).
+* @param L
+* @param buf
+* @param err_idx absolute index of error message on stack
+*/
+void rspamd_lua_get_traceback_string_idx(lua_State *L, luaL_Buffer *buf, int err_idx);
 
 /**
 * Returns size of table at position `tbl_pos`

@@ -2253,7 +2253,7 @@ lua_task_insert_result_common(lua_State *L, struct rspamd_scan_result *result,
 
 			msg_info_task("symbol insertion issue: %s", lua_tostring(L, -1));
 
-			lua_pop(L, 2); /* Traceback string + error string */
+			lua_pop(L, 1); /* Traceback string (error string was consumed by rspamd_lua_traceback) */
 		}
 		else {
 			/* Usually denied by settings */
