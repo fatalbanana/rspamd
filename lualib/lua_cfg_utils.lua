@@ -71,9 +71,12 @@ exports.check_configuration_errors = function()
   if type(rspamd_plugins_state.config_errors) == 'table' then
     -- We have some errors found during the configuration, so we need to show them
     for m, errs in pairs(rspamd_plugins_state.config_errors) do
-      for _, err in ipairs(errs) do
-        rspamd_logger.errx(rspamd_config, 'configuration error: module %s: %s', m, err)
-        ret = false
+      -- Skip errors for modules that are explicitly disabled
+      if not rspamd_plugins_state.disabled_explicitly[m] then
+        for _, err in ipairs(errs) do
+          rspamd_logger.errx(rspamd_config, 'configuration error: module %s: %s', m, err)
+          ret = false
+        end
       end
     end
   end
