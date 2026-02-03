@@ -25,7 +25,8 @@
 static gboolean json = FALSE;
 static gboolean compact = FALSE;
 static gboolean keyword = FALSE;
-static const char *plugins_path = RSPAMD_PLUGINSDIR;
+static char *config = NULL;
+static gboolean skip_template = FALSE;
 extern struct rspamd_main *rspamd_main;
 /* Defined in modules.c */
 extern module_t *modules[];
@@ -54,10 +55,12 @@ static GOptionEntry entries[] = {
 	 "Output json", NULL},
 	{"compact", 'c', 0, G_OPTION_ARG_NONE, &compact,
 	 "Output compacted", NULL},
+	{"config", 'C', 0, G_OPTION_ARG_STRING, &config,
+	 "Config file to use", NULL},
 	{"keyword", 'k', 0, G_OPTION_ARG_NONE, &keyword,
 	 "Search by keyword", NULL},
-	{"plugins", 'P', 0, G_OPTION_ARG_STRING, &plugins_path,
-	 "Use the following plugin path (" RSPAMD_PLUGINSDIR ")", NULL},
+	{"skip-template", 'T', 0, G_OPTION_ARG_NONE, &skip_template,
+	 "Do not apply Jinja templates", NULL},
 	{NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL}};
 
 static const char *
@@ -70,9 +73,10 @@ rspamadm_confighelp_help(gboolean full_help, const struct rspamadm_command *cmd)
 				   "Usage: rspamadm confighelp [option[, option...]]\n"
 				   "Where options are:\n\n"
 				   "-c: output compacted JSON\n"
+				   "-C: config file to use\n"
 				   "-j: output pretty formatted JSON\n"
 				   "-k: search by keyword in doc string\n"
-				   "-P: use specific Lua plugins path\n"
+				   "-T: do not apply Jinja templates\n"
 				   "--no-color: disable coloured output\n"
 				   "--short: show only option names\n"
 				   "--no-examples: do not show examples (implied by --short)\n"
@@ -295,6 +299,11 @@ rspamadm_confighelp_lookup_plugin_doc(ucl_object_t *plugins_doc, const char *key
 	return elt;
 }
 
+static void
+config_logger(rspamd_mempool_t *pool, gpointer ud)
+{
+}
+
 __attribute__((noreturn)) static void
 rspamadm_confighelp(int argc, char **argv, const struct rspamadm_command *cmd)
 {
@@ -306,6 +315,7 @@ rspamadm_confighelp(int argc, char **argv, const struct rspamadm_command *cmd)
 	module_t *mod, **pmod;
 	worker_t **pworker;
 	struct module_ctx *mod_ctx;
+	const char *confdir;
 	int i, ret = 0, processed_args = 0;
 	ucl_object_t *plugins_doc = NULL;
 
@@ -325,6 +335,20 @@ rspamadm_confighelp(int argc, char **argv, const struct rspamadm_command *cmd)
 	}
 
 	g_option_context_free(context);
+
+	if (config == NULL) {
+		static char fbuf[PATH_MAX];
+
+		if ((confdir = g_hash_table_lookup(ucl_vars, "CONFDIR")) == NULL) {
+			confdir = RSPAMD_CONFDIR;
+		}
+
+		rspamd_snprintf(fbuf, sizeof(fbuf), "%s%c%s",
+						confdir, G_DIR_SEPARATOR,
+						"rspamd.conf");
+		config = fbuf;
+	}
+
 	pworker = &workers[0];
 	while (*pworker) {
 		/* Init string quarks */
@@ -336,11 +360,19 @@ rspamadm_confighelp(int argc, char **argv, const struct rspamadm_command *cmd)
 	cfg->lua_state = rspamd_main->cfg->lua_state;
 	cfg->compiled_modules = modules;
 	cfg->compiled_workers = workers;
+	cfg->cfg_name = config;
 
-	rspamd_rcl_config_init(cfg, NULL);
 	lua_pushboolean(cfg->lua_state, true);
 	lua_setglobal(cfg->lua_state, "confighelp");
-	rspamd_rcl_add_lua_plugins_path(cfg->rcl_top_section, cfg, plugins_path, FALSE, NULL);
+
+	if (!rspamd_config_read(cfg, cfg->cfg_name, config_logger, rspamd_main,
+							ucl_vars, skip_template, lua_env)) {
+		rspamd_fprintf(stderr, "cannot read config file: %s\n", config);
+		exit(EXIT_FAILURE);
+	}
+
+	/* Do post-load actions to init modules */
+	rspamd_lua_post_load_config(cfg);
 
 	/* Init modules to get documentation strings */
 	i = 0;
@@ -360,8 +392,7 @@ rspamadm_confighelp(int argc, char **argv, const struct rspamadm_command *cmd)
 		(*pworker)->worker_init_func(cfg);
 	}
 
-	/* Init lua modules */
-	rspamd_lua_set_path(cfg->lua_state, cfg->cfg_ucl_obj, ucl_vars);
+	/* Init lua filters - config is already loaded so this will find custom plugins */
 	rspamd_init_lua_filters(cfg, true, false);
 
 	if (argc > 1) {
