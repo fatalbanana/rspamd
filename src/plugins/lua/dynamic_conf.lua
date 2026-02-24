@@ -20,6 +20,8 @@ local ucl = require "ucl"
 local fun = require "fun"
 local lua_util = require "lua_util"
 local rspamd_redis = require "lua_redis"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 local N = "dynamic_conf"
 
 if confighelp then
@@ -31,6 +33,15 @@ local settings = {
   redis_watch_interval = 10.0,
   priority = 10
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  redis_key = T.string():optional():doc({ summary = "Redis key for dynamic configuration storage" }),
+  redis_watch_interval = T.number({ min = 0.1 }):optional():doc({ summary = "Interval in seconds between Redis checks" }),
+  priority = T.integer({ min = 0 }):optional():doc({ summary = "Priority for dynamic configuration updates" }),
+}):doc({ summary = "Dynamic configuration plugin settings" })
+
+PluginSchema.register("plugins.dynamic_conf", settings_schema)
 
 local cur_settings = {
   version = 0,
@@ -245,6 +256,15 @@ if section then
   for k, v in pairs(section) do
     settings[k] = v
   end
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
 
   rspamd_config:add_on_load(function(_, ev_base, worker)
     if worker:is_scanner() then

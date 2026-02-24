@@ -32,6 +32,8 @@ local lua_settings = require "lua_settings"
 local ucl = require "ucl"
 local fun = require "fun"
 local rspamd_mempool = require "rspamd_mempool"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local redis_params
 
@@ -40,6 +42,64 @@ local N = "settings"
 local settings_initialized = false
 local max_pri = 0
 local module_sym_id -- Main module symbol
+
+-- Settings schema for lua_shape validation
+-- Each settings rule has a flexible structure with conditions and actions
+local settings_rule_schema = T.table({
+  id = T.string():optional():doc({ summary = "Unique identifier for the settings rule" }),
+  priority = T.one_of({
+    T.string(), -- "high", "medium", "low"
+    T.integer({ min = 0 })
+  }):optional():doc({ summary = "Priority level (high/medium/low or numeric)" }),
+  disabled = T.boolean():optional():doc({ summary = "Disable this settings rule" }),
+  -- Address conditions
+  ip = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "IP address(es) or CIDR to match" }),
+  ip_map = T.string():optional():doc({ summary = "Map of IP addresses to match" }),
+  client_ip = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "Client IP address(es) to match" }),
+  client_ip_map = T.string():optional():doc({ summary = "Map of client IP addresses" }),
+  from = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "Envelope from address pattern(s)" }),
+  rcpt = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "Envelope recipient pattern(s)" }),
+  from_mime = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "MIME from address pattern(s)" }),
+  rcpt_mime = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "MIME recipient pattern(s)" }),
+  user = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "Authenticated user pattern(s)" }),
+  hostname = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "Hostname pattern(s)" }),
+  -- Special conditions
+  authenticated = T.boolean():optional():doc({ summary = "Match authenticated users" }),
+  ["local"] = T.boolean():optional():doc({ summary = "Match local connections" }),
+  inverse = T.boolean():optional():doc({ summary = "Invert condition matching" }),
+  -- Header conditions (flexible key-value pairs)
+  header = T.table({}, { open = true }):optional():doc({ summary = "Header patterns to match" }),
+  request_header = T.table({}, { open = true }):optional():doc({ summary = "Request header patterns to match" }),
+  -- Selector condition
+  selector = T.string():optional():doc({ summary = "Selector expression for matching" }),
+  delimiter = T.string():optional():doc({ summary = "Delimiter for selector" }),
+  -- Expression for combining conditions
+  expression = T.string():optional():doc({ summary = "Boolean expression combining conditions" }),
+  -- Actions
+  apply = T.table({}, { open = true }):optional():doc({ summary = "Settings to apply when rule matches" }),
+  whitelist = T.boolean():optional():doc({ summary = "Whitelist matching messages" }),
+  want_spam = T.boolean():optional():doc({ summary = "Accept spam for matching messages (deprecated)" }),
+  -- Symbols to insert
+  symbols = T.one_of({
+    T.array(T.string()),
+    T.table({}, { open = true })
+  }):optional():doc({ summary = "Symbols to insert when rule matches" }),
+  -- External map for dynamic settings
+  external_map = T.table({
+    map = T.table({}, { open = true }):optional():doc({ summary = "Map configuration" }),
+    selector = T.string():optional():doc({ summary = "Selector for external lookup" }),
+  }, { open = true }):optional():doc({ summary = "External map configuration for dynamic settings" }),
+  -- Symbol registration
+  register_symbols = T.table({}, { open = true }):optional():doc({ summary = "Symbols to register for this rule" }),
+}, { open = true }):doc({ summary = "Settings rule configuration" })
+
+local settings_schema = T.one_of({
+  T.string(), -- Path to settings map
+  T.array(settings_rule_schema), -- Array of settings rules
+  T.table({}, { open = true }), -- Named settings rules (open to allow rule names as keys
+}):doc({ summary = "Settings plugin configuration" })
+
+PluginSchema.register("plugins.settings", settings_schema)
 
 local function apply_settings(task, to_apply, id, name)
   local cached_name = task:cache_get('settings_name')
@@ -1379,6 +1439,15 @@ if set_section and set_section[1] and type(set_section[1]) == "string" then
     rspamd_logger.errx(rspamd_config, 'cannot load settings from %s', set_section)
   end
 elseif set_section and type(set_section) == "table" then
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(set_section)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  set_section = res
+
   settings_map_pool = rspamd_mempool.create()
   -- We need to check this table and register static symbols first
   -- Postponed settings init is needed to ensure that all symbols have been

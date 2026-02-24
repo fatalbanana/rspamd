@@ -15,7 +15,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ]]--
 
-
 -- Weight for checks_hellohost and checks_hello: 5 - very hard, 4 - hard, 3 - medium, 2 - low, 1 - very low.
 -- From HFILTER_HELO_* and HFILTER_HOSTNAME_* symbols the maximum weight is selected in case of their actuating.
 
@@ -25,6 +24,9 @@ end
 
 local rspamd_regexp = require "rspamd_regexp"
 local lua_util = require "lua_util"
+local rspamd_logger = require "rspamd_logger"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 local rspamc_local_helo = "rspamc.local"
 local checks_hellohost = [[
 /[-.0-9][0-9][.-]?nat/i 5
@@ -188,6 +190,20 @@ local compiled_regexp = {} -- cache of regexps
 local check_local = false
 local check_authed = false
 local N = "hfilter"
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  helo_enabled = T.boolean():optional():doc({ summary = "Enable HELO checks" }),
+  hostname_enabled = T.boolean():optional():doc({ summary = "Enable hostname checks" }),
+  from_enabled = T.boolean():optional():doc({ summary = "Enable MAIL FROM checks" }),
+  rcpt_enabled = T.boolean():optional():doc({ summary = "Enable recipient checks" }),
+  mid_enabled = T.boolean():optional():doc({ summary = "Enable Message-ID checks" }),
+  url_enabled = T.boolean():optional():doc({ summary = "Enable URL content checks" }),
+  check_local = T.boolean():optional():doc({ summary = "Check local network connections" }),
+  check_authed = T.boolean():optional():doc({ summary = "Check authenticated users" }),
+}):doc({ summary = "Hfilter plugin configuration" })
+
+PluginSchema.register("plugins.hfilter", settings_schema)
 
 local function check_regexp(str, regexp_text)
   local re = compiled_regexp[regexp_text]
@@ -561,6 +577,15 @@ if opts then
   for k, v in pairs(opts) do
     config[k] = v
   end
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(config)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  config = res
 end
 
 local function append_t(t, a)

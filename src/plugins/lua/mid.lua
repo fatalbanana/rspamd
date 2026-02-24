@@ -26,6 +26,9 @@ end
 local rspamd_logger = require "rspamd_logger"
 local rspamd_regexp = require "rspamd_regexp"
 local lua_util = require "lua_util"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
+
 local N = "mid"
 
 local settings = {
@@ -38,6 +41,21 @@ local settings = {
   csymbol_invalid_msgid_allowed = 'INVALID_MSGID_ALLOWED',
   csymbol_missing_mid_allowed = 'MISSING_MID_ALLOWED',
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  url = T.string():optional():doc({ summary = "Deprecated: use source instead" }),
+  source = T.string():doc({ summary = "URL or path to the Message-IDs map (required)" }),
+  symbol_known_mid = T.string():optional():doc({ summary = "Symbol for known Message-ID" }),
+  symbol_known_no_mid = T.string():optional():doc({ summary = "Symbol for known missing Message-ID" }),
+  symbol_invalid_msgid = T.string():optional():doc({ summary = "Symbol for invalid Message-ID" }),
+  symbol_missing_mid = T.string():optional():doc({ summary = "Symbol for missing Message-ID" }),
+  symbol_dkim_allow = T.string():optional():doc({ summary = "Symbol for DKIM allow" }),
+  csymbol_invalid_msgid_allowed = T.string():optional():doc({ summary = "Composite symbol for allowed invalid Message-ID" }),
+  csymbol_missing_mid_allowed = T.string():optional():doc({ summary = "Composite symbol for allowed missing Message-ID" }),
+}):doc({ summary = "MID plugin configuration" })
+
+PluginSchema.register("plugins.mid", settings_schema)
 
 local map
 
@@ -76,14 +94,17 @@ if opts then
     settings[k] = v
   end
 
-  if not opts.source then
-    rspamd_logger.infox(rspamd_config, 'mid module requires "source" parameter')
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
     lua_util.disable_module(N, "config")
     return
   end
+  settings = res
 
   map = rspamd_config:add_map {
-    url = opts.source,
+    url = settings.source,
     description = "Message-IDs map",
     type = 'map'
   }

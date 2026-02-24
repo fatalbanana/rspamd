@@ -30,6 +30,8 @@ local rspamd_tcp = require "rspamd_tcp"
 local lua_redis = require "lua_redis"
 local lua_mime = require "lua_mime"
 local ucl = require "ucl"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 local E = {}
 local N = 'metadata_exporter'
 local HOSTNAME = rspamd_util.get_hostname()
@@ -70,6 +72,26 @@ Symbols: $symbols]],
   keepalive = false,
   no_ssl_verify = false,
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  pusher_enabled = T.table({}, { open = true }):optional():doc({ summary = "Enabled pusher backends" }),
+  pusher_format = T.table({}, { open = true }):optional():doc({ summary = "Formatter for each pusher backend" }),
+  pusher_select = T.table({}, { open = true }):optional():doc({ summary = "Selector for each pusher backend" }),
+  mime_type = T.string():optional():doc({ summary = "MIME type for HTTP pusher" }),
+  defer = T.boolean():optional():doc({ summary = "Defer message on push failure" }),
+  mail_from = T.string():optional():doc({ summary = "From address for email alerts" }),
+  mail_to = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "Recipient address(es) for email alerts" }),
+  helo = T.string():optional():doc({ summary = "HELO name for SMTP connections" }),
+  email_template = T.string():optional():doc({ summary = "Email template for alerts" }),
+  timeout = T.number():optional():doc({ summary = "Timeout for push operations" }),
+  gzip = T.boolean():optional():doc({ summary = "Enable gzip compression" }),
+  keepalive = T.boolean():optional():doc({ summary = "Enable HTTP keepalive" }),
+  no_ssl_verify = T.boolean():optional():doc({ summary = "Disable SSL verification" }),
+  rules = T.table({}, { open = true }):optional():doc({ summary = "Export rules configuration" }),
+}):doc({ summary = "Metadata exporter plugin configuration" })
+
+PluginSchema.register("plugins.metadata_exporter", settings_schema)
 
 local function get_general_metadata(task, flatten, no_content)
   local r = {}
@@ -637,6 +659,16 @@ for k, v in pairs(opts) do
     settings[k] = v
   end
 end
+
+-- Validate settings with lua_shape
+local res, err = settings_schema:transform(settings)
+if not res then
+  rspamd_logger.errx(rspamd_config, 'invalid %s config: %s', N, err)
+  lua_util.disable_module(N, "config")
+  return
+end
+settings = res
+
 if type(settings.rules) ~= 'table' then
   -- Legacy config
   settings.rules = {}

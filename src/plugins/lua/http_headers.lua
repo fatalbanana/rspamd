@@ -14,8 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ]]--
 
+if confighelp then
+  return
+end
+
 local logger = require "rspamd_logger"
 local ucl = require "ucl"
+local lua_util = require "lua_util"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local spf_symbols = {
   symbol_allow = 'R_SPF_ALLOW',
@@ -53,6 +60,53 @@ local dmarc_symbols = {
   quarantine = 'DMARC_POLICY_QUARANTINE',
 }
 
+local N = 'http_headers'
+
+local settings = {
+  spf_symbols = spf_symbols,
+  dkim_symbols = dkim_symbols,
+  dkim_trace = dkim_trace,
+  dmarc_symbols = dmarc_symbols,
+}
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  spf_symbols = T.table({
+    symbol_allow = T.string():optional():doc({ summary = "Symbol for SPF allow" }),
+    symbol_deny = T.string():optional():doc({ summary = "Symbol for SPF deny" }),
+    symbol_softfail = T.string():optional():doc({ summary = "Symbol for SPF softfail" }),
+    symbol_neutral = T.string():optional():doc({ summary = "Symbol for SPF neutral" }),
+    symbol_tempfail = T.string():optional():doc({ summary = "Symbol for SPF tempfail" }),
+    symbol_na = T.string():optional():doc({ summary = "Symbol for SPF not applicable" }),
+    symbol_permfail = T.string():optional():doc({ summary = "Symbol for SPF permfail" }),
+  }):optional():doc({ summary = "SPF symbol configuration" }),
+  dkim_symbols = T.table({
+    symbol_allow = T.string():optional():doc({ summary = "Symbol for DKIM allow" }),
+    symbol_deny = T.string():optional():doc({ summary = "Symbol for DKIM deny" }),
+    symbol_tempfail = T.string():optional():doc({ summary = "Symbol for DKIM tempfail" }),
+    symbol_na = T.string():optional():doc({ summary = "Symbol for DKIM not applicable" }),
+    symbol_permfail = T.string():optional():doc({ summary = "Symbol for DKIM permfail" }),
+    symbol_trace = T.string():optional():doc({ summary = "Symbol for DKIM trace" }),
+  }):optional():doc({ summary = "DKIM symbol configuration" }),
+  dkim_trace = T.table({
+    pass = T.string():optional():doc({ summary = "DKIM trace character for pass" }),
+    fail = T.string():optional():doc({ summary = "DKIM trace character for fail" }),
+    temperror = T.string():optional():doc({ summary = "DKIM trace character for temperror" }),
+    permerror = T.string():optional():doc({ summary = "DKIM trace character for permerror" }),
+  }):optional():doc({ summary = "DKIM trace character configuration" }),
+  dmarc_symbols = T.table({
+    allow = T.string():optional():doc({ summary = "Symbol for DMARC allow" }),
+    badpolicy = T.string():optional():doc({ summary = "Symbol for DMARC bad policy" }),
+    dnsfail = T.string():optional():doc({ summary = "Symbol for DMARC DNS fail" }),
+    na = T.string():optional():doc({ summary = "Symbol for DMARC not applicable" }),
+    reject = T.string():optional():doc({ summary = "Symbol for DMARC reject" }),
+    softfail = T.string():optional():doc({ summary = "Symbol for DMARC softfail" }),
+    quarantine = T.string():optional():doc({ summary = "Symbol for DMARC quarantine" }),
+  }):optional():doc({ summary = "DMARC symbol configuration" }),
+}):doc({ summary = "HTTP headers plugin configuration" })
+
+PluginSchema.register("plugins.http_headers", settings_schema)
+
 local opts = rspamd_config:get_all_opt('dmarc')
 if opts and opts['symbols'] then
   for k, _ in pairs(dmarc_symbols) do
@@ -79,6 +133,27 @@ if opts then
     end
   end
 end
+
+-- Load http_headers specific settings
+opts = rspamd_config:get_all_opt('http_headers')
+if opts then
+  settings = lua_util.override_defaults(settings, opts)
+end
+
+-- Validate settings with lua_shape
+local shape_res, shape_err = settings_schema:transform(settings)
+if not shape_res then
+  logger.errx(rspamd_config, 'invalid %s config: %s', N, shape_err)
+  lua_util.disable_module(N, "config")
+  return
+end
+settings = shape_res
+
+-- Update local references from validated settings
+spf_symbols = settings.spf_symbols
+dkim_symbols = settings.dkim_symbols
+dkim_trace = settings.dkim_trace
+dmarc_symbols = settings.dmarc_symbols
 
 -- Disable DKIM checks if passed via HTTP headers
 rspamd_config:add_condition("DKIM_CHECK", function(task)

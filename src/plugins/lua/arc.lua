@@ -22,6 +22,8 @@ local fun = require "fun"
 local lua_auth_results = require "lua_auth_results"
 local lua_mime = require "lua_mime"
 local hash = require "rspamd_cryptobox_hash"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 if confighelp then
   return
@@ -85,6 +87,36 @@ local settings = {
 
 -- To match normal AR
 local ar_settings = lua_auth_results.default_settings
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  allow_envfrom_empty = T.boolean():optional():doc({ summary = "Allow empty envelope from" }),
+  allow_hdrfrom_mismatch = T.boolean():optional():doc({ summary = "Allow header from mismatch" }),
+  allow_hdrfrom_mismatch_local = T.boolean():optional():doc({ summary = "Allow header from mismatch for local networks" }),
+  allow_hdrfrom_mismatch_sign_networks = T.boolean():optional():doc({ summary = "Allow header from mismatch for signing networks" }),
+  allow_hdrfrom_multiple = T.boolean():optional():doc({ summary = "Allow multiple From headers" }),
+  allow_username_mismatch = T.boolean():optional():doc({ summary = "Allow username mismatch" }),
+  sign_authenticated = T.boolean():optional():doc({ summary = "Sign authenticated messages" }),
+  domain = T.table({}, { open = true }):optional():doc({ summary = "Domain-specific signing configuration" }),
+  path = T.string():optional():doc({ summary = "Path template for signing keys" }),
+  sign_local = T.boolean():optional():doc({ summary = "Sign local messages" }),
+  selector = T.string():optional():doc({ summary = "DKIM selector for signing" }),
+  sign_symbol = T.string():optional():doc({ summary = "Symbol for signed messages" }),
+  try_fallback = T.boolean():optional():doc({ summary = "Try fallback domain for signing" }),
+  use_domain = T.enum({ "header", "envelope" }):optional():doc({ summary = "Domain source for signing" }),
+  use_esld = T.boolean():optional():doc({ summary = "Use effective sender domain (ESLD)" }),
+  use_redis = T.boolean():optional():doc({ summary = "Load keys from Redis" }),
+  key_prefix = T.string():optional():doc({ summary = "Redis key prefix for ARC keys" }),
+  reuse_auth_results = T.boolean():optional():doc({ summary = "Reuse existing Authentication-Results header" }),
+  trusted_authserv_id = T.string():optional():doc({ summary = "Trusted AuthservID for AR reuse" }),
+  whitelisted_signers_map = T.string():optional():doc({ summary = "Path to map of trusted signer domains" }),
+  whitelist = T.string():optional():doc({ summary = "Path to map of domains with broken ARC implementations" }),
+  adjust_dmarc = T.boolean():optional():doc({ summary = "Adjust DMARC policy for trusted forwarders" }),
+  allowed_ids = T.array(T.string()):optional():doc({ summary = "Allowed settings IDs" }),
+  forbidden_ids = T.array(T.string()):optional():doc({ summary = "Forbidden settings IDs" }),
+}):doc({ summary = "ARC plugin configuration" })
+
+PluginSchema.register("plugins.arc", settings_schema)
 
 -- Get Authentication-Results header, optionally filtering by trusted authserv-id
 local function get_trusted_ar_header(task)
@@ -868,6 +900,15 @@ local function arc_signing_cb(task)
 end
 
 dkim_sign_tools.process_signing_settings(N, settings, opts)
+
+-- Validate settings with lua_shape
+local res, err = settings_schema:transform(settings)
+if not res then
+  rspamd_logger.errx(rspamd_config, 'invalid %s config: %s', N, err)
+  lua_util.disable_module(N, "config")
+  return
+end
+settings = res
 
 -- Process ARC-specific maps that aren't handled by dkim_sign_tools
 local lua_maps = require "lua_maps"

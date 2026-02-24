@@ -20,6 +20,8 @@ local rspamd_logger = require "rspamd_logger"
 local dkim_sign_tools = require "lua_dkim_tools"
 local lua_redis = require "lua_redis"
 local lua_mime = require "lua_mime"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 if confighelp then
   return
@@ -49,6 +51,34 @@ local settings = {
   key_prefix = 'dkim_keys', -- default hash name
   use_milter_headers = false, -- use milter headers instead of `dkim_signature`
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  allow_envfrom_empty = T.boolean():optional():doc({ summary = "Allow empty envelope from" }),
+  allow_hdrfrom_mismatch = T.boolean():optional():doc({ summary = "Allow header from mismatch" }),
+  allow_hdrfrom_mismatch_local = T.boolean():optional():doc({ summary = "Allow header from mismatch for local networks" }),
+  allow_hdrfrom_mismatch_sign_networks = T.boolean():optional():doc({ summary = "Allow header from mismatch for signing networks" }),
+  allow_hdrfrom_multiple = T.boolean():optional():doc({ summary = "Allow multiple From headers" }),
+  allow_username_mismatch = T.boolean():optional():doc({ summary = "Allow username mismatch" }),
+  allow_pubkey_mismatch = T.boolean():optional():doc({ summary = "Allow public key mismatch" }),
+  sign_authenticated = T.boolean():optional():doc({ summary = "Sign authenticated messages" }),
+  allowed_ids = T.array(T.string()):optional():doc({ summary = "Allowed settings IDs" }),
+  forbidden_ids = T.array(T.string()):optional():doc({ summary = "Forbidden settings IDs" }),
+  check_pubkey = T.boolean():optional():doc({ summary = "Check public key before signing" }),
+  domain = T.table({}, { open = true }):optional():doc({ summary = "Domain-specific signing configuration" }),
+  path = T.string():optional():doc({ summary = "Path template for signing keys" }),
+  sign_local = T.boolean():optional():doc({ summary = "Sign local messages" }),
+  selector = T.string():optional():doc({ summary = "DKIM selector for signing" }),
+  symbol = T.string():optional():doc({ summary = "Symbol for signed messages" }),
+  try_fallback = T.boolean():optional():doc({ summary = "Try fallback domain for signing" }),
+  use_domain = T.enum({ "header", "envelope" }):optional():doc({ summary = "Domain source for signing" }),
+  use_esld = T.boolean():optional():doc({ summary = "Use effective sender domain (ESLD)" }),
+  use_redis = T.boolean():optional():doc({ summary = "Load keys from Redis" }),
+  key_prefix = T.string():optional():doc({ summary = "Redis key prefix for DKIM keys" }),
+  use_milter_headers = T.boolean():optional():doc({ summary = "Use milter headers instead of dkim_signature" }),
+}):doc({ summary = "DKIM signing plugin configuration" })
+
+PluginSchema.register("plugins.dkim_signing", settings_schema)
 
 local N = 'dkim_signing'
 local redis_params
@@ -143,6 +173,15 @@ if not opts then
 end
 
 dkim_sign_tools.process_signing_settings(N, settings, opts)
+
+-- Validate settings with lua_shape
+local res, err = settings_schema:transform(settings)
+if not res then
+  rspamd_logger.errx(rspamd_config, 'invalid %s config: %s', N, err)
+  lua_util.disable_module(N, "config")
+  return
+end
+settings = res
 
 if not dkim_sign_tools.validate_signing_settings(settings) then
   rspamd_logger.infox(rspamd_config, 'mandatory parameters missing, disable dkim signing')

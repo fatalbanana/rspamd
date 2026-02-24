@@ -26,6 +26,8 @@ local lua_maps = require "lua_maps"
 local lua_mime_types = require "lua_mime_types"
 local lua_magic_types = require "lua_magic/types"
 local fun = require "fun"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local N = "mime_types"
 local settings = {
@@ -246,6 +248,71 @@ local settings = {
   -- Multiplier for full extension_map mismatch
   other_extensions_mult = 0.4,
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  file = T.string():optional():doc({ summary = "Path to MIME types map file" }),
+  symbol_unknown = T.string():optional():doc({ summary = "Symbol for unknown content type" }),
+  symbol_bad = T.string():optional():doc({ summary = "Symbol for bad content type" }),
+  symbol_good = T.string():optional():doc({ summary = "Symbol for good content type" }),
+  symbol_attachment = T.string():optional():doc({ summary = "Symbol for attachment mismatch" }),
+  symbol_encrypted_archive = T.string():optional():doc({ summary = "Symbol for encrypted archives" }),
+  symbol_obfuscated_archive = T.string():optional():doc({ summary = "Symbol for obfuscated archives" }),
+  symbol_exe_in_gen_split_rar = T.string():optional():doc({ summary = "Symbol for EXE in generic split RAR" }),
+  symbol_archive_in_archive = T.string():optional():doc({ summary = "Symbol for archive inside archive" }),
+  symbol_double_extension = T.string():optional():doc({ summary = "Symbol for double extension" }),
+  symbol_bad_extension = T.string():optional():doc({ summary = "Symbol for bad extension" }),
+  symbol_bad_unicode = T.string():optional():doc({ summary = "Symbol for bad unicode in filename" }),
+  regexp = T.boolean():optional():doc({ summary = "Treat file as regexp map" }),
+  extension_map = T.table({}, { open = true }):optional()
+    :doc({ summary = "Map of extension to MIME type(s)" }),
+  bad_extensions = T.table({}, { open = true }):optional()
+    :doc({ summary = "Map of bad extensions to scores" }),
+  bad_extensions_map = T.string():optional()
+    :doc({ summary = "Path to map of bad extensions" }),
+  bad_archive_extensions = T.table({}, { open = true }):optional()
+    :doc({ summary = "Map of bad archive extensions to scores" }),
+  archive_extensions = T.table({}, { open = true }):optional()
+    :doc({ summary = "Map of recognized archive extensions" }),
+  archive_global_extensions = T.array(T.string()):optional()
+    :doc({ summary = "List of global archive extensions" }),
+  archive_exceptions = T.table({}, { open = true }):optional()
+    :doc({ summary = "Extensions that look like archives but are not" }),
+  unknown_extensions = T.array(T.string()):optional()
+    :doc({ summary = "List of unknown extensions to warn about" }),
+  filename_whitelist = T.string():optional()
+    :doc({ summary = "Path to filename whitelist map" }),
+  default_type = T.string():optional()
+    :doc({ summary = "Default MIME type for unknown files" }),
+  default_type_ext = T.string():optional()
+    :doc({ summary = "Default extension for unknown files" }),
+  max_missing_segments = T.integer({ min = 0 }):optional()
+    :doc({ summary = "Maximum missing segments before considering file incomplete" }),
+  default_score = T.number():optional()
+    :doc({ summary = "Default score for bad extensions" }),
+  mark_missing = T.boolean():optional()
+    :doc({ summary = "Mark files with missing segments" }),
+  score_mult = T.number():optional()
+    :doc({ summary = "Score multiplier" }),
+  score_no_context = T.number():optional()
+    :doc({ summary = "Score when no context is available" }),
+  score_only_text = T.number():optional()
+    :doc({ summary = "Score for text-only parts" }),
+  other_extensions_mult = T.number():optional()
+    :doc({ summary = "Multiplier for full extension_map mismatch" }),
+  rename_orig = T.string():optional()
+    :doc({ summary = "Original extension for renaming" }),
+  rename_new = T.string():optional()
+    :doc({ summary = "New extension for renaming" }),
+  check_anyext = T.boolean():optional()
+    :doc({ summary = "Check any extension" }),
+  check_text_links = T.boolean():optional()
+    :doc({ summary = "Check links in text parts" }),
+  check_text_sanitisations = T.boolean():optional()
+    :doc({ summary = "Check sanitizations in text parts" }),
+}):doc({ summary = "MIME types plugin configuration" })
+
+PluginSchema.register("plugins.mime_types", settings_schema)
 
 local map = nil
 
@@ -620,6 +687,15 @@ if opts then
   for k, v in pairs(opts) do
     settings[k] = v
   end
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
 
   settings.filename_whitelist = lua_maps.rspamd_map_add('mime_types', 'filename_whitelist', 'regexp',
       'filename whitelist')

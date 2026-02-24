@@ -73,6 +73,18 @@ end
 
 -- A plugin that implements greylisting using redis
 
+local rspamd_logger = require "rspamd_logger"
+local rspamd_util = require "rspamd_util"
+local lua_redis = require "lua_redis"
+local lua_util = require "lua_util"
+local fun = require "fun"
+local hash = require "rspamd_cryptobox_hash"
+local rspamd_lua_utils = require "lua_util"
+local lua_map = require "lua_maps"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
+local N = "greylist"
+
 local redis_params
 local whitelisted_ip
 local whitelist_domains_map
@@ -93,15 +105,40 @@ local settings = {
   check_authed = false,
 }
 
-local rspamd_logger = require "rspamd_logger"
-local rspamd_util = require "rspamd_util"
-local lua_redis = require "lua_redis"
-local lua_util = require "lua_util"
-local fun = require "fun"
-local hash = require "rspamd_cryptobox_hash"
-local rspamd_lua_utils = require "lua_util"
-local lua_map = require "lua_maps"
-local N = "greylist"
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  expire = T.one_of({
+    T.integer({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Bucket expiry time in seconds" }),
+  timeout = T.one_of({
+    T.integer({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Greylisting timeout in seconds" }),
+  key_prefix = T.string():optional():doc({ summary = "Redis key prefix" }),
+  max_data_len = T.one_of({
+    T.integer({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_bytes)
+  }):optional():doc({ summary = "Max data length for body hash" }),
+  message = T.string():optional():doc({ summary = "Greylisting message" }),
+  message_func = T.string():optional():doc({ summary = "Custom message function (Lua code)" }),
+  symbol = T.string():optional():doc({ summary = "Symbol to insert" }),
+  action = T.string():optional():doc({ summary = "Action on greylisting" }),
+  whitelist_symbols = T.array(T.string()):optional():doc({ summary = "Symbols to whitelist" }),
+  ipv4_mask = T.integer({ min = 0, max = 32 }):optional():doc({ summary = "IPv4 mask bits" }),
+  ipv6_mask = T.integer({ min = 0, max = 128 }):optional():doc({ summary = "IPv6 mask bits" }),
+  report_time = T.boolean():optional():doc({ summary = "Report expiry time in message" }),
+  check_local = T.boolean():optional():doc({ summary = "Greylist local messages" }),
+  check_authed = T.boolean():optional():doc({ summary = "Greylist authenticated users" }),
+  greylist_min_score = T.number():optional():doc({ summary = "Minimum score for greylisting" }),
+  whitelisted_ip = T.string():optional():doc({ summary = "Path to IP whitelist map" }),
+  whitelist_domains_url = T.one_of({
+    T.string(),
+    T.array(T.string())
+  }):optional():doc({ summary = "Path(s) to domain whitelist map" }),
+}):doc({ summary = "Greylist plugin configuration" })
+
+PluginSchema.register("plugins.greylist", settings_schema)
 
 local function data_key(task)
   local cached = task:get_mempool():get_variable("grey_bodyhash")
@@ -550,6 +587,15 @@ if opts then
       settings[k] = v
     end
   end
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
 
   local auth_and_local_conf = lua_util.config_check_local_or_authed(rspamd_config, N,
       false, false)

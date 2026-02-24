@@ -25,6 +25,8 @@ local rspamd_logger = require "rspamd_logger"
 local rspamd_trie = require "rspamd_trie"
 local fun = require "fun"
 local lua_util = require "lua_util"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local mime_trie
 local raw_trie
@@ -40,6 +42,12 @@ local body_patterns = {}
 local mime_params = {}
 local raw_params = {}
 local body_params = {}
+
+-- Settings schema for lua_shape validation
+-- Trie configuration is a table with symbol names as keys
+local settings_schema = T.table({}, { open = true }):doc({ summary = "Trie plugin configuration (symbol names as keys)" })
+
+PluginSchema.register("plugins.trie", settings_schema)
 
 local function tries_callback(task)
 
@@ -139,6 +147,15 @@ end
 
 local opts = rspamd_config:get_all_opt("trie")
 if opts then
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(opts)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  opts = res
+
   for sym, opt in pairs(opts) do
     process_trie_conf(sym, opt)
   end

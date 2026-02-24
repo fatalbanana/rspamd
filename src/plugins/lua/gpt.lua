@@ -124,6 +124,8 @@ local llm_search_context = require "llm_search_context"
 local lua_maps_expressions = require "lua_maps_expressions"
 local lua_maps = require "lua_maps"
 local lua_selectors = require "lua_selectors"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 -- Exclude checks if one of those is found
 local default_symbols_to_except = {
@@ -251,6 +253,85 @@ local settings = {
     disable_expression = nil,
   },
 }
+
+-- Settings schema for lua_shape validation
+local context_schema = T.table({
+  enabled = T.boolean():optional():doc({ summary = "Enable user/domain context" }),
+  level = T.enum({ "user", "domain", "esld" }):optional():doc({ summary = "Context scope level" }),
+  key_prefix = T.string():optional():doc({ summary = "Redis key prefix" }),
+  key_suffix = T.string():optional():doc({ summary = "Redis key suffix" }),
+  max_messages = T.integer({ min = 1 }):optional():doc({ summary = "Max messages to keep" }),
+  min_messages = T.integer({ min = 0 }):optional():doc({ summary = "Min messages before injecting context" }),
+  message_ttl = T.one_of({
+    T.integer({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Message TTL in seconds" }),
+  ttl = T.one_of({
+    T.integer({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Redis key TTL in seconds" }),
+  top_senders = T.integer({ min = 0 }):optional():doc({ summary = "Track top N senders" }),
+  summary_max_chars = T.integer({ min = 1 }):optional():doc({ summary = "Max chars for summary" }),
+  flagged_phrases = T.array(T.string()):optional():doc({ summary = "Phrases to flag" }),
+  last_labels_count = T.integer({ min = 0 }):optional():doc({ summary = "Keep last N labels" }),
+  as_system = T.boolean():optional():doc({ summary = "Inject as system message" }),
+  enable_expression = T.table({}):optional():doc({ summary = "Enable gating expression" }),
+  disable_expression = T.table({}):optional():doc({ summary = "Disable gating expression" }),
+}, { open = true }):doc({ summary = "User/domain context configuration" })
+
+local search_context_schema = T.table({
+  enabled = T.boolean():optional():doc({ summary = "Enable web search context" }),
+  search_url = T.string():optional():doc({ summary = "Search API endpoint URL" }),
+  search_engine = T.string():optional():doc({ summary = "Search engine name" }),
+  max_domains = T.integer({ min = 1 }):optional():doc({ summary = "Max domains to search" }),
+  max_results_per_query = T.integer({ min = 1 }):optional():doc({ summary = "Max results per query" }),
+  timeout = T.one_of({
+    T.number({ min = 0 }),
+    T.transform(T.string(), tonumber)
+  }):optional():doc({ summary = "HTTP timeout in seconds" }),
+  cache_ttl = T.integer({ min = 0 }):optional():doc({ summary = "Cache TTL in seconds" }),
+  cache_key_prefix = T.string():optional():doc({ summary = "Redis cache key prefix" }),
+  as_system = T.boolean():optional():doc({ summary = "Inject as system message" }),
+  enable_expression = T.table({}):optional():doc({ summary = "Enable gating expression" }),
+  disable_expression = T.table({}):optional():doc({ summary = "Disable gating expression" }),
+}, { open = true }):doc({ summary = "Web search context configuration" })
+
+local settings_schema = T.table({
+  type = T.enum({ "openai", "ollama" }):optional():doc({ summary = "LLM type" }),
+  api_key = T.string():optional():doc({ summary = "API key for authentication" }),
+  model = T.one_of({
+    T.string(),
+    T.array(T.string())
+  }):optional():doc({ summary = "Model name(s)" }),
+  reply_trim_mode = T.string():optional():doc({ summary = "Reply trim mode" }),
+  timeout = T.one_of({
+    T.number({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Request timeout" }),
+  connect_timeout = T.number({ min = 0 }):optional():doc({ summary = "Connect timeout" }),
+  ssl_timeout = T.number({ min = 0 }):optional():doc({ summary = "SSL timeout" }),
+  write_timeout = T.number({ min = 0 }):optional():doc({ summary = "Write timeout" }),
+  read_timeout = T.number({ min = 0 }):optional():doc({ summary = "Read timeout" }),
+  prompt = T.string():optional():doc({ summary = "Custom prompt for the model" }),
+  condition = T.string():optional():doc({ summary = "Custom condition (Lua code)" }),
+  autolearn = T.boolean():optional():doc({ summary = "Enable autolearn from GPT classification" }),
+  reason_header = T.string():optional():doc({ summary = "Header name for reason" }),
+  url = T.string():optional():doc({ summary = "API endpoint URL" }),
+  allow_passthrough = T.boolean():optional():doc({ summary = "Check messages with passthrough" }),
+  allow_ham = T.boolean():optional():doc({ summary = "Check apparent ham messages" }),
+  json = T.boolean():optional():doc({ summary = "Use JSON format for response" }),
+  cache_prefix = T.string():optional():doc({ summary = "Redis cache prefix" }),
+  request_timeout = T.number({ min = 0 }):optional():doc({ summary = "Request timeout for server" }),
+  context = context_schema:optional(),
+  search_context = search_context_schema:optional(),
+  -- Open tables for complex nested configs we can't fully validate
+  model_parameters = T.table({}, { open = true }):optional():doc({ summary = "Per-model parameters" }),
+  symbols_to_except = T.table({}, { open = true }):optional():doc({ summary = "Symbols to exclude" }),
+  symbols_to_trigger = T.table({}, { open = true }):optional():doc({ summary = "Symbols to trigger" }),
+  extra_symbols = T.table({}, { open = true }):optional():doc({ summary = "Extra symbols configuration" }),
+}):doc({ summary = "GPT plugin configuration" })
+
+PluginSchema.register("plugins.gpt", settings_schema)
 local redis_params
 local cache_context
 local compiled_context_gating = {
@@ -1266,6 +1347,15 @@ local opts = rspamd_config:get_all_opt(N)
 if opts then
   redis_params = lua_redis.parse_redis_server(N, opts)
   settings = lua_util.override_defaults(settings, opts)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
 
   if redis_params then
     cache_context = lua_cache.create_cache_context(redis_params, settings, N)

@@ -21,9 +21,21 @@ local lua_redis = require "lua_redis"
 local fun = require "fun"
 local lua_scanners = require("lua_scanners").filter('scanner')
 local common = require "lua_scanners/common"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 local redis_params
 
 local N = "external_services"
+
+-- Settings schema for lua_shape validation
+-- External services plugins have dynamic scanner configurations, so we use open table
+local settings_schema = T.table({}, { open = true })
+    :doc({
+      summary = "External services plugin configuration",
+      description = "Configuration for multiple external scanners. Each scanner is a named block with scanner-specific options."
+    })
+
+PluginSchema.register("plugins.external_services", settings_schema)
 
 if confighelp then
   rspamd_config:add_example(nil, 'external_services',
@@ -182,6 +194,15 @@ end
 -- Registration
 local opts = rspamd_config:get_all_opt(N)
 if opts and type(opts) == 'table' then
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(opts)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  opts = res
+
   redis_params = lua_redis.parse_redis_server(N)
   local has_valid = false
   for k, m in pairs(opts) do

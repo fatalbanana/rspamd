@@ -30,6 +30,8 @@ local lua_verdict = require "lua_verdict"
 local rspamd_hash = require "rspamd_cryptobox_hash"
 local lua_selectors = require "lua_selectors"
 local ratelimit_common = require "plugins/ratelimit"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 -- A plugin that implements ratelimits using redis
 
 local E = {}
@@ -56,6 +58,30 @@ local settings = {
   allow_local = false,
   prefilter = true,
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  bounce_senders = T.array(T.string()):optional():doc({ summary = "Senders that are considered as bounce" }),
+  whitelisted_rcpts = T.array(T.string()):optional():doc({ summary = "Recipients to skip ratelimit checks for" }),
+  prefix = T.string():optional():doc({ summary = "Redis key prefix for ratelimit buckets" }),
+  lfb_cache_prefix = T.string():optional():doc({ summary = "Last filled buckets cache prefix" }),
+  lfb_max_cache_size = T.integer({ min = 1 }):optional():doc({ summary = "Maximum cache size for last filled buckets" }),
+  dynamic_rate_limit = T.boolean():optional():doc({ summary = "Apply dynamic rate limiting based on verdict" }),
+  ham_factor_rate = T.number({ min = 0 }):optional():doc({ summary = "Factor to increase rate for ham messages" }),
+  spam_factor_rate = T.number({ min = 0 }):optional():doc({ summary = "Factor to decrease rate for spam messages" }),
+  ham_factor_burst = T.number({ min = 0 }):optional():doc({ summary = "Factor to increase burst for ham messages" }),
+  spam_factor_burst = T.number({ min = 0 }):optional():doc({ summary = "Factor to decrease burst for spam messages" }),
+  max_rate_mult = T.number({ min = 1 }):optional():doc({ summary = "Maximum rate multiplier" }),
+  max_bucket_mult = T.number({ min = 1 }):optional():doc({ summary = "Maximum bucket multiplier" }),
+  expire = T.number({ min = 0 }):optional():doc({ summary = "Expiration time for ratelimit buckets in seconds" }),
+  limits = T.table({}, { open = true }):optional():doc({ summary = "Rate limit definitions" }),
+  allow_local = T.boolean():optional():doc({ summary = "Allow ratelimit checks for local connections" }),
+  prefilter = T.boolean():optional():doc({ summary = "Run as prefilter instead of callback" }),
+  symbol = T.string():optional():doc({ summary = "Symbol to insert when rate limit exceeded" }),
+  info_symbol = T.string():optional():doc({ summary = "Symbol for informational rate limit notification" }),
+}):doc({ summary = "Ratelimit plugin configuration" })
+
+PluginSchema.register("plugins.ratelimit", settings_schema)
 
 local bucket_check_script = "ratelimit_check.lua"
 local bucket_check_id
@@ -591,6 +617,15 @@ local opts = rspamd_config:get_all_opt(N)
 if opts then
 
   settings = lua_util.override_defaults(settings, opts)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
 
   if opts['limit'] then
     rspamd_logger.errx(rspamd_config, 'Legacy ratelimit config format no longer supported')

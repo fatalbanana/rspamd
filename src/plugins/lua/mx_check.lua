@@ -26,6 +26,8 @@ local lua_util = require "lua_util"
 local lua_redis = require "lua_redis"
 local N = "mx_check"
 local fun = require "fun"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local settings = {
   timeout = 1.0, -- connect timeout
@@ -40,6 +42,33 @@ local settings = {
   max_mx_a_records = 5, -- Maximum number of A records to check per MX request
   wait_for_greeting = false, -- Wait for SMTP greeting and emit `quit` command
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  timeout = T.one_of({
+    T.number({ min = 0 }),
+    T.transform(T.string(), tonumber)
+  }):optional():doc({ summary = "Connect timeout in seconds" }),
+  symbol_bad_mx = T.string():optional():doc({ summary = "Symbol for bad MX" }),
+  symbol_no_mx = T.string():optional():doc({ summary = "Symbol for missing MX" }),
+  symbol_good_mx = T.string():optional():doc({ summary = "Symbol for good MX" }),
+  symbol_white_mx = T.string():optional():doc({ summary = "Symbol for whitelisted MX" }),
+  expire = T.one_of({
+    T.integer({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Cache expiry time in seconds" }),
+  expire_novalid = T.one_of({
+    T.integer({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Expiry for no valid MX in seconds" }),
+  greylist_invalid = T.boolean():optional():doc({ summary = "Greylist messages with invalid MX" }),
+  key_prefix = T.string():optional():doc({ summary = "Redis key prefix" }),
+  max_mx_a_records = T.integer({ min = 1, max = 100 }):optional():doc({ summary = "Max A records to check" }),
+  wait_for_greeting = T.boolean():optional():doc({ summary = "Wait for SMTP greeting" }),
+  exclude_domains = T.string():optional():doc({ summary = "Path to excluded domains map" }),
+}):doc({ summary = "MX check plugin configuration" })
+
+PluginSchema.register("plugins.mx_check", settings_schema)
 local redis_params
 local exclude_domains
 
@@ -321,6 +350,16 @@ if opts then
   end
 
   settings = lua_util.override_defaults(settings, opts)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
+
   lua_redis.register_prefix(settings.key_prefix .. '*', N,
       'MX check cache', {
         type = 'string',

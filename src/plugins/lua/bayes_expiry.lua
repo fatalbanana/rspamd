@@ -25,6 +25,8 @@ local logger = require "rspamd_logger"
 local rspamd_util = require "rspamd_util"
 local lutil = require "lua_util"
 local lredis = require "lua_redis"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local settings = {
   interval = 60, -- one iteration step per minute
@@ -35,6 +37,19 @@ local settings = {
   classifiers = {},
   cluster_nodes = 0,
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  interval = T.number({ min = 1 }):optional():doc({ summary = "One iteration step per interval seconds" }),
+  count = T.integer({ min = 1 }):optional():doc({ summary = "Check up to N keys on each iteration" }),
+  epsilon_common = T.number({ min = 0, max = 1 }):optional():doc({ summary = "Eliminate common when spam/ham rate equals epsilon" }),
+  common_ttl = T.number({ min = 0 }):optional():doc({ summary = "TTL of discriminated common elements" }),
+  significant_factor = T.number({ min = 0, max = 1 }):optional():doc({ summary = "Which tokens should we update" }),
+  classifiers = T.table({}, { open = true }):optional():doc({ summary = "Classifiers configuration (populated automatically)" }),
+  cluster_nodes = T.integer({ min = 0 }):optional():doc({ summary = "Number of nodes in cluster (0 for auto-detect)" }),
+}):doc({ summary = "Bayes expiry plugin configuration" })
+
+PluginSchema.register("plugins.bayes_expiry", settings_schema)
 
 local template = {}
 
@@ -177,6 +192,15 @@ if opts then
   for k, v in pairs(opts) do
     settings[k] = v
   end
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lutil.disable_module(N, "config")
+    return
+  end
+  settings = res
 end
 
 -- In clustered setup, we need to increase interval of expiration

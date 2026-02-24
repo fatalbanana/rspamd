@@ -19,6 +19,8 @@ local lua_util = require "lua_util"
 local rspamd_spf = require "rspamd_spf"
 local bit = require "bit"
 local rspamd_logger = require "rspamd_logger"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 if confighelp then
   rspamd_config:add_example(nil, N,
@@ -70,12 +72,40 @@ local default_config = {
   external_relay = nil,
 }
 
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  spf_cache_size = T.integer({ min = 1 }):optional():doc({ summary = "SPF cache size" }),
+  max_dns_nesting = T.integer({ min = 1 }):optional():doc({ summary = "Maximum DNS nesting level" }),
+  max_dns_requests = T.integer({ min = 1 }):optional():doc({ summary = "Maximum DNS requests per record" }),
+  whitelist = T.string():optional():doc({ summary = "Path to IP whitelist" }),
+  min_cache_ttl = T.one_of({
+    T.integer({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Minimum cache TTL in seconds" }),
+  disable_ipv6 = T.boolean():optional():doc({ summary = "Disable IPv6 lookups" }),
+  symbols = T.table({}, { open = true }):optional():doc({ summary = "Symbol names mapping" }),
+  external_relay = T.one_of({
+    T.string(),
+    T.array(T.string())
+  }):optional():doc({ summary = "External relay IP addresses" }),
+}):doc({ summary = "SPF plugin configuration" })
+
+PluginSchema.register("plugins.spf", settings_schema)
+
 local local_config = rspamd_config:get_all_opt('spf')
 local auth_and_local_conf = lua_util.config_check_local_or_authed(rspamd_config, N,
     false, false)
 
 if local_config then
   local_config = lua_util.override_defaults(default_config, local_config)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(local_config)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    return
+  end
+  local_config = res
 else
   local_config = default_config
 end

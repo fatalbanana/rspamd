@@ -25,6 +25,8 @@ local mempool = require "rspamd_mempool"
 local util = require "rspamd_util"
 local tcp = require "rspamd_tcp"
 local lua_util = require "lua_util"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local pool
 local settings = {
@@ -56,6 +58,19 @@ local valid_metrics = {
   'shared_chunks_allocated',
   'spam_count',
 }
+
+local settings_schema = T.table({
+  backend = T.string():optional():doc({ summary = "Backend type (e.g., graphite)" }),
+  interval = T.number():optional():doc({ summary = "Interval between metric pushes (seconds)" }),
+  timeout = T.number():optional():doc({ summary = "Connection timeout (seconds)" }),
+  statefile = T.string():optional():doc({ summary = "Path to state file for persistence" }),
+  host = T.string():optional():doc({ summary = "Backend host (for graphite)" }),
+  port = T.integer():optional():doc({ summary = "Backend port (for graphite)" }),
+  metric_prefix = T.string():optional():doc({ summary = "Metric name prefix (for graphite)" }),
+  metrics = T.array(T.string()):optional():doc({ summary = "List of metrics to export" }),
+}, { open = true }):doc({ summary = "Metric exporter plugin configuration" })
+
+PluginSchema.register("plugins.metric_exporter", settings_schema)
 
 local function validate_metrics(settings_metrics)
   if type(settings_metrics) ~= 'table' or #settings_metrics == 0 then
@@ -163,6 +178,12 @@ local function configure_metric_exporter()
   for k, v in pairs(opts) do
     settings[k] = v
   end
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    return false
+  end
+  settings = res
   return backends[be]['configure']()
 end
 

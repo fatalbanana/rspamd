@@ -18,13 +18,15 @@ limitations under the License.
 local rspamd_logger = require "rspamd_logger"
 local rspamd_regexp = require "rspamd_regexp"
 local lua_util = require "lua_util"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 local N = "asn"
 
 if confighelp then
   return
 end
 
-local options = {
+local settings = {
   provider_type = 'rspamd',
   provider_info = {
     ip4 = 'asn.rspamd.com',
@@ -33,6 +35,16 @@ local options = {
   symbol = 'ASN',
   check_local = false,
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  provider_type = T.enum({ "rspamd", "external" }):optional():doc({ summary = "ASN provider type" }),
+  provider_info = T.table({}, { open = true }):optional():doc({ summary = "Provider-specific configuration" }),
+  symbol = T.string():optional():doc({ summary = "Symbol to insert for ASN info" }),
+  check_local = T.boolean():optional():doc({ summary = "Check local IP addresses" }),
+}):doc({ summary = "ASN plugin configuration" })
+
+PluginSchema.register("plugins.asn", settings_schema)
 
 local rspamd_re = rspamd_regexp.create_cached("[\\|\\s]")
 
@@ -57,21 +69,21 @@ local function asn_check(task)
       mempool:set_variable("country", country)
       table.insert(descr_t, "country:" .. country)
     end
-    if options['symbol'] then
-      task:insert_result(options['symbol'], 0.0, table.concat(descr_t, ', '))
+    if settings['symbol'] then
+      task:insert_result(settings['symbol'], 0.0, table.concat(descr_t, ', '))
     end
   end
 
   local asn_check_func = {}
   asn_check_func.rspamd = function(ip)
-    local dnsbl = options['provider_info']['ip' .. ip:get_version()]
+    local dnsbl = settings['provider_info']['ip' .. ip:get_version()]
     local req_name = string.format("%s.%s",
         table.concat(ip:inversed_str_octets(), '.'), dnsbl)
     local function rspamd_dns_cb(_, _, results, dns_err, _, _, serv)
       if dns_err and (dns_err ~= 'requested record is not found' and dns_err ~= 'no records with this name') then
         rspamd_logger.errx(task, 'error querying dns "%s" on %s: %s',
             req_name, serv, dns_err)
-        task:insert_result(options['symbol_fail'], 0, string.format('%s:%s', req_name, dns_err))
+        task:insert_result(settings['symbol_fail'], 0, string.format('%s:%s', req_name, dns_err))
         return
       end
       if not results or not results[1] then
@@ -97,42 +109,48 @@ local function asn_check(task)
 
   local ip = task:get_from_ip()
   if not (ip and ip:is_valid()) or
-      (not options.check_local and ip:is_local()) then
+      (not settings.check_local and ip:is_local()) then
     return
   end
 
-  asn_check_func[options['provider_type']](ip)
+  asn_check_func[settings['provider_type']](ip)
 end
 
 -- Configuration options
 local configure_asn_module = function()
   local opts = rspamd_config:get_all_opt('asn')
   if opts then
-    for k, v in pairs(opts) do
-      options[k] = v
+    settings = lua_util.override_defaults(settings, opts)
+
+    -- Validate settings with lua_shape
+    local res, err = settings_schema:transform(settings)
+    if not res then
+      rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+      return false
     end
+    settings = res
   end
 
   local auth_and_local_conf = lua_util.config_check_local_or_authed(rspamd_config, N,
       false, true)
-  options.check_local = auth_and_local_conf[1]
-  options.check_authed = auth_and_local_conf[2]
+  settings.check_local = auth_and_local_conf[1]
+  settings.check_authed = auth_and_local_conf[2]
 
-  if options['provider_type'] == 'rspamd' then
-    if not options['provider_info'] and options['provider_info']['ip4'] and
-        options['provider_info']['ip6'] then
+  if settings['provider_type'] == 'rspamd' then
+    if not settings['provider_info'] or not settings['provider_info']['ip4'] or
+        not settings['provider_info']['ip6'] then
       rspamd_logger.errx(rspamd_config, "Missing required provider_info for rspamd")
       return false
     end
   else
-    rspamd_logger.errx(rspamd_config, "Unknown provider_type: %s", options['provider_type'])
+    rspamd_logger.errx(rspamd_config, "Unknown provider_type: %s", settings['provider_type'])
     return false
   end
 
-  if options['symbol'] then
-    options['symbol_fail'] = options['symbol'] .. '_FAIL'
+  if settings['symbol'] then
+    settings['symbol_fail'] = settings['symbol'] .. '_FAIL'
   else
-    options['symbol_fail'] = 'ASN_FAIL'
+    settings['symbol_fail'] = 'ASN_FAIL'
   end
 
   return true
@@ -147,9 +165,9 @@ if configure_asn_module() then
     flags = 'empty,nostat',
     augmentations = { lua_util.dns_timeout_augmentation(rspamd_config) },
   })
-  if options['symbol'] then
+  if settings['symbol'] then
     rspamd_config:register_symbol({
-      name = options['symbol'],
+      name = settings['symbol'],
       parent = id,
       type = 'virtual',
       flags = 'empty,nostat',
@@ -157,7 +175,7 @@ if configure_asn_module() then
     })
   end
   rspamd_config:register_symbol {
-    name = options['symbol_fail'],
+    name = settings['symbol_fail'],
     parent = id,
     type = 'virtual',
     flags = 'empty,nostat',

@@ -20,8 +20,21 @@ end
 
 -- Module for checking mail list headers
 local N = 'maillist'
-local symbol = 'MAILLIST'
 local lua_util = require "lua_util"
+local rspamd_logger = require "rspamd_logger"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
+
+local settings = {
+  symbol = 'MAILLIST',
+}
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  symbol = T.string():optional():doc({ summary = "Symbol name for maillist detection" }),
+}):doc({ summary = "Maillist plugin configuration" })
+
+PluginSchema.register("plugins.maillist", settings_schema)
 -- EZMLM
 -- Mailing-List: .*run by ezmlm
 -- Precedence: bulk
@@ -203,18 +216,18 @@ local function check_maillist(task)
   local score = check_generic_list_headers(task)
   if score >= 1 then
     if check_ml_ezmlm(task) then
-      task:insert_result(symbol, 1, 'ezmlm')
+      task:insert_result(settings.symbol, 1, 'ezmlm')
     elseif check_ml_mailman(task) then
-      task:insert_result(symbol, 1, 'mailman')
+      task:insert_result(settings.symbol, 1, 'mailman')
     elseif check_ml_googlegroup(task) then
-      task:insert_result(symbol, 1, 'googlegroups')
+      task:insert_result(settings.symbol, 1, 'googlegroups')
     elseif check_ml_cgp(task) then
-      task:insert_result(symbol, 1, 'cgp')
+      task:insert_result(settings.symbol, 1, 'cgp')
     else
       if score > 2 then
         score = 2
       end
-      task:insert_result(symbol, 0.5 * score, 'generic')
+      task:insert_result(settings.symbol, 0.5 * score, 'generic')
     end
   end
 end
@@ -222,14 +235,22 @@ end
 
 
 -- Configuration
-local opts = rspamd_config:get_all_opt('maillist')
+local opts = rspamd_config:get_all_opt(N)
 if opts then
-  if opts['symbol'] then
-    symbol = opts['symbol']
-    rspamd_config:register_symbol({
-      name = symbol,
-      callback = check_maillist,
-      flags = 'nice'
-    })
+  settings = lua_util.override_defaults(settings, opts)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
   end
+  settings = res
+
+  rspamd_config:register_symbol({
+    name = settings.symbol,
+    callback = check_maillist,
+    flags = 'nice'
+  })
 end

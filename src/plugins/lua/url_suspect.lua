@@ -31,6 +31,8 @@ local lua_util = require "lua_util"
 local rspamd_url = require "rspamd_url"
 local rspamd_util = require "rspamd_util"
 local bit = require "bit"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 -- Symbol names (fixed, not configurable)
 local symbols = {
@@ -148,6 +150,19 @@ local settings = {
   use_whitelist = false,
   custom_checks = {}
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  enabled = T.boolean():optional():doc({ summary = "Enable the plugin" }),
+  process_flags = T.array(T.string()):optional():doc({ summary = "URL flags to filter for processing" }),
+  max_urls = T.integer({ min = 1 }):optional():doc({ summary = "Maximum URLs to process (DoS protection)" }),
+  checks = T.table({}, { open = true }):optional():doc({ summary = "Check-specific configuration" }),
+  symbols = T.table({}, { open = true }):optional():doc({ summary = "Symbol name overrides" }),
+  use_whitelist = T.boolean():optional():doc({ summary = "Use whitelist map" }),
+  custom_checks = T.table({}, { open = true }):optional():doc({ summary = "Custom check functions" }),
+}):doc({ summary = "URL suspect plugin configuration" })
+
+PluginSchema.register("plugins.url_suspect", settings_schema)
 
 -- Optional maps (only loaded if enabled)
 local maps = {
@@ -718,6 +733,15 @@ local opts = rspamd_config:get_all_opt(N)
 if opts then
   settings = lua_util.override_defaults(settings, opts)
 end
+
+-- Validate configuration
+local res, err = settings_schema:transform(settings)
+if not res then
+  rspamd_logger.errx(rspamd_config, 'invalid %s config: %s', N, err)
+  lua_util.disable_module(N, "config")
+  return
+end
+settings = res
 
 if settings.enabled then
   init_maps(settings)

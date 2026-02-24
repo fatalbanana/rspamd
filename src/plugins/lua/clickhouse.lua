@@ -20,6 +20,8 @@ local lua_util = require "lua_util"
 local lua_clickhouse = require "lua_clickhouse"
 local lua_settings = require "lua_settings"
 local fun = require "fun"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local N = "clickhouse"
 
@@ -98,6 +100,67 @@ local settings = {
   },
   extra_columns = {},
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  limits = T.table({
+    max_rows = T.integer({ min = 0 }):optional():doc({ summary = "Maximum rows before collection" }),
+    max_memory = T.integer({ min = 0 }):optional():doc({ summary = "Maximum memory in bytes before collection" }),
+    max_interval = T.integer({ min = 0 }):optional():doc({ summary = "Maximum collection interval in seconds" }),
+  }):optional():doc({ summary = "Collection limits" }),
+  collect_garbage = T.boolean():optional():doc({ summary = "Perform GC collection after sending data" }),
+  check_timeout = T.number({ min = 0 }):optional():doc({ summary = "Periodic timeout for checking" }),
+  timeout = T.number({ min = 0 }):optional():doc({ summary = "Timeout for HTTP requests" }),
+  ipmask = T.integer({ min = 0, max = 32 }):optional():doc({ summary = "IPv4 mask bits" }),
+  ipmask6 = T.integer({ min = 0, max = 128 }):optional():doc({ summary = "IPv6 mask bits" }),
+  full_urls = T.boolean():optional():doc({ summary = "Store full URLs instead of just hosts" }),
+  database = T.string():optional():doc({ summary = "Clickhouse database name" }),
+  use_https = T.boolean():optional():doc({ summary = "Use HTTPS for connections" }),
+  use_gzip = T.boolean():optional():doc({ summary = "Use gzip compression" }),
+  allow_local = T.boolean():optional():doc({ summary = "Allow local connections" }),
+  insert_subject = T.boolean():optional():doc({ summary = "Insert email subject" }),
+  subject_privacy = T.boolean():optional():doc({ summary = "Enable subject privacy obfuscation" }),
+  subject_privacy_alg = T.string():optional():doc({ summary = "Hash algorithm for subject obfuscation" }),
+  subject_privacy_prefix = T.string():optional():doc({ summary = "Prefix for obfuscated subjects" }),
+  subject_privacy_length = T.integer({ min = 1 }):optional():doc({ summary = "Length of obfuscated subject hash" }),
+  user = T.string():optional():doc({ summary = "Clickhouse username" }),
+  password = T.string():optional():doc({ summary = "Clickhouse password" }),
+  no_ssl_verify = T.boolean():optional():doc({ summary = "Disable SSL verification" }),
+  enable_symbols = T.boolean():optional():doc({ summary = "Store symbol information" }),
+  enable_digest = T.boolean():optional():doc({ summary = "Store message digest" }),
+  enable_uuid = T.boolean():optional():doc({ summary = "Store task UUID" }),
+  retention = T.table({}, { open = true }):optional():doc({ summary = "Retention policy settings" }),
+  extra_columns = T.array(T.table({}, { open = true })):optional():doc({ summary = "Extra columns to add" }),
+  schema_additions = T.array(T.string()):optional():doc({ summary = "Additional SQL statements for schema" }),
+  custom_rules = T.table({}, { open = true }):optional():doc({ summary = "Custom data collection rules" }),
+  exceptions = T.table({}, { open = true }):optional():doc({ summary = "Exceptions map expression" }),
+  bayes_spam_symbols = T.array(T.string()):optional():doc({ summary = "Bayes spam symbols" }),
+  bayes_ham_symbols = T.array(T.string()):optional():doc({ summary = "Bayes ham symbols" }),
+  ann_symbols_spam = T.array(T.string()):optional():doc({ summary = "Neural spam symbols" }),
+  ann_symbols_ham = T.array(T.string()):optional():doc({ summary = "Neural ham symbols" }),
+  fuzzy_symbols = T.array(T.string()):optional():doc({ summary = "Fuzzy hash symbols" }),
+  whitelist_symbols = T.array(T.string()):optional():doc({ summary = "Whitelist symbols" }),
+  dkim_allow_symbols = T.array(T.string()):optional():doc({ summary = "DKIM allow symbols" }),
+  dkim_reject_symbols = T.array(T.string()):optional():doc({ summary = "DKIM reject symbols" }),
+  dkim_dnsfail_symbols = T.array(T.string()):optional():doc({ summary = "DKIM DNS failure symbols" }),
+  dkim_na_symbols = T.array(T.string()):optional():doc({ summary = "DKIM not applicable symbols" }),
+  dmarc_allow_symbols = T.array(T.string()):optional():doc({ summary = "DMARC allow symbols" }),
+  dmarc_reject_symbols = T.array(T.string()):optional():doc({ summary = "DMARC reject symbols" }),
+  dmarc_quarantine_symbols = T.array(T.string()):optional():doc({ summary = "DMARC quarantine symbols" }),
+  dmarc_softfail_symbols = T.array(T.string()):optional():doc({ summary = "DMARC soft fail symbols" }),
+  dmarc_na_symbols = T.array(T.string()):optional():doc({ summary = "DMARC not applicable symbols" }),
+  spf_allow_symbols = T.array(T.string()):optional():doc({ summary = "SPF allow symbols" }),
+  spf_reject_symbols = T.array(T.string()):optional():doc({ summary = "SPF reject symbols" }),
+  spf_dnsfail_symbols = T.array(T.string()):optional():doc({ summary = "SPF DNS failure symbols" }),
+  spf_neutral_symbols = T.array(T.string()):optional():doc({ summary = "SPF neutral symbols" }),
+  spf_na_symbols = T.array(T.string()):optional():doc({ summary = "SPF not applicable symbols" }),
+  stop_symbols = T.array(T.string()):optional():doc({ summary = "Symbols that stop collection" }),
+  server = T.string():optional():doc({ summary = "Clickhouse server address" }),
+  servers = T.array(T.string()):optional():doc({ summary = "Clickhouse server addresses" }),
+  from_tables = T.string():optional():doc({ summary = "Map of domains to exclude from collection" }),
+}):doc({ summary = "Clickhouse plugin configuration" })
+
+PluginSchema.register("plugins.clickhouse", settings_schema)
 
 --- @language SQL
 local clickhouse_schema = { [[
@@ -1648,6 +1711,15 @@ if opts then
       settings[k] = lua_util.deepcopy(v)
     end
   end
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
 
   if not settings['server'] and not settings['servers'] then
     rspamd_logger.infox(rspamd_config, 'no servers are specified, disabling module')

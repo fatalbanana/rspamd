@@ -23,6 +23,8 @@ local rspamd_util = require "rspamd_util"
 local fun = require "fun"
 local lua_util = require "lua_util"
 local lua_maps = require "lua_maps"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local N = "whitelist"
 
@@ -34,6 +36,18 @@ local options = {
   check_authed = false,
   rules = {}
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  dmarc_allow_symbol = T.string():optional():doc({ summary = "Symbol for DMARC policy allow" }),
+  spf_allow_symbol = T.string():optional():doc({ summary = "Symbol for SPF allow" }),
+  dkim_allow_symbol = T.string():optional():doc({ summary = "Symbol for DKIM allow" }),
+  check_local = T.boolean():optional():doc({ summary = "Check local networks" }),
+  check_authed = T.boolean():optional():doc({ summary = "Check authenticated users" }),
+  rules = T.table({}, { open = true }):optional():doc({ summary = "Whitelist rule definitions" }),
+}):doc({ summary = "Whitelist plugin configuration" })
+
+PluginSchema.register("plugins.whitelist", settings_schema)
 
 local E = {}
 
@@ -325,6 +339,15 @@ local configure_whitelist_module = function()
     for k, v in pairs(opts) do
       options[k] = v
     end
+
+    -- Validate settings with lua_shape
+    local res, err = settings_schema:transform(options)
+    if not res then
+      rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+      lua_util.disable_module(N, "config")
+      return
+    end
+    options = res
 
     local auth_and_local_conf = lua_util.config_check_local_or_authed(rspamd_config, N,
         false, false)

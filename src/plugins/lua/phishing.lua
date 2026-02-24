@@ -22,6 +22,8 @@ local rspamd_logger = require "rspamd_logger"
 local util = require "rspamd_util"
 local lua_util = require "lua_util"
 local lua_maps = require "lua_maps"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 -- Phishing detection interface for selecting phished urls and inserting corresponding symbol
 --
@@ -52,11 +54,47 @@ local phishing_feed_exclusion_data = {}
 local generic_service_data = {}
 local openphish_data = {}
 
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  symbol = T.string():optional():doc({ summary = "Main phishing detection symbol" }),
+  phishing_feed_exclusion_symbol = T.string():optional():doc({ summary = "Symbol for phishing feed exclusions" }),
+  phishing_feed_exclusion_map = T.string():optional():doc({ summary = "Map URL for phishing feed exclusions" }),
+  phishing_feed_exclusion_enabled = T.boolean():optional():doc({ summary = "Enable phishing feed exclusion" }),
+  generic_service_symbol = T.string():optional():doc({ summary = "Symbol for generic service phishing" }),
+  generic_service_map = T.string():optional():doc({ summary = "Map URL for generic service phishing" }),
+  generic_service_url = T.string():optional():doc({ summary = "Alternative map URL for generic service phishing" }),
+  generic_service_name = T.string():optional():doc({ summary = "Name for generic service feed" }),
+  generic_service_enabled = T.boolean():optional():doc({ summary = "Enable generic service phishing detection" }),
+  openphish_map = T.string():optional():doc({ summary = "Map URL for OpenPhish feed" }),
+  openphish_url = T.string():optional():doc({ summary = "Alternative map URL for OpenPhish feed" }),
+  openphish_premium = T.boolean():optional():doc({ summary = "Use OpenPhish premium feed (JSON format)" }),
+  openphish_enabled = T.boolean():optional():doc({ summary = "Enable OpenPhish phishing detection" }),
+  phishtank_enabled = T.boolean():optional():doc({ summary = "Enable PhishTank phishing detection via DNS" }),
+  phishtank_suffix = T.string():optional():doc({ summary = "DNS suffix for PhishTank queries" }),
+  domains = T.one_of({
+    T.string(),
+    T.array(T.string())
+  }):optional():doc({ summary = "Phishing domains map" }),
+  phishing_exceptions = T.table({}, { open = true }):optional():doc({ summary = "Phishing exceptions per symbol" }),
+  exceptions = T.table({}, { open = true }):optional():doc({ summary = "Anchor exceptions per symbol" }),
+  strict_domains = T.table({}, { open = true }):optional():doc({ summary = "Strict domain rules per symbol" }),
+}):doc({ summary = "Phishing plugin configuration" })
+
+PluginSchema.register("plugins.phishing", settings_schema)
+
 local opts = rspamd_config:get_all_opt(N)
 if not (opts and type(opts) == 'table') then
   rspamd_logger.infox(rspamd_config, 'Module is unconfigured')
   return
 end
+
+-- Validate settings with lua_shape
+local validated_opts, validation_err = settings_schema:transform(opts)
+if not validated_opts then
+  rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, validation_err)
+  return
+end
+opts = validated_opts
 
 local function is_host_excluded(exclusion_map, host)
   if exclusion_map and host then

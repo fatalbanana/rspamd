@@ -14,8 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ]] --
 
--- luacheck: globals rspamd_config confighelp
-
 --[[[
 -- @module aliases
 -- Email aliases resolution and message classification plugin
@@ -32,6 +30,8 @@ local rspamd_util = require "rspamd_util"
 local lua_util = require "lua_util"
 local lua_aliases = require "lua_aliases"
 local fun = require "fun"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local N = "aliases"
 
@@ -285,6 +285,36 @@ local settings = {
   score_tagged_rcpt = 0.0,
 }
 
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  enabled = T.boolean():optional():doc({ summary = "Enable the plugin" }),
+  system_aliases = T.string():optional():doc({ summary = "Path to system aliases file" }),
+  virtual_aliases = T.string():optional():doc({ summary = "Path to virtual aliases file" }),
+  local_domains = T.array(T.string()):optional():doc({ summary = "List of local domains" }),
+  rspamd_aliases = T.string():optional():doc({ summary = "Path to rspamd aliases file" }),
+  max_recursion_depth = T.integer({ min = 1, max = 100 }):optional():doc({ summary = "Maximum recursion depth for alias resolution" }),
+  expand_multiple = T.boolean():optional():doc({ summary = "Expand aliases that resolve to multiple addresses" }),
+  track_chain = T.boolean():optional():doc({ summary = "Track alias resolution chain" }),
+  apply_to_mime = T.boolean():optional():doc({ summary = "Apply alias resolution to MIME addresses" }),
+  apply_to_smtp = T.boolean():optional():doc({ summary = "Apply alias resolution to SMTP addresses" }),
+  enable_gmail_rules = T.boolean():optional():doc({ summary = "Enable Gmail-specific address rules" }),
+  enable_plus_aliases = T.boolean():optional():doc({ summary = "Enable plus-addressing rules" }),
+  symbol_local_inbound = T.string():optional():doc({ summary = "Symbol for local inbound mail" }),
+  symbol_local_outbound = T.string():optional():doc({ summary = "Symbol for local outbound mail" }),
+  symbol_internal_mail = T.string():optional():doc({ summary = "Symbol for internal mail" }),
+  symbol_alias_resolved = T.string():optional():doc({ summary = "Symbol for resolved aliases" }),
+  symbol_tagged_from = T.string():optional():doc({ summary = "Symbol for tagged From addresses" }),
+  symbol_tagged_rcpt = T.string():optional():doc({ summary = "Symbol for tagged recipients" }),
+  score_local_inbound = T.number():optional():doc({ summary = "Score for local inbound mail" }),
+  score_local_outbound = T.number():optional():doc({ summary = "Score for local outbound mail" }),
+  score_internal_mail = T.number():optional():doc({ summary = "Score for internal mail" }),
+  score_alias_resolved = T.number():optional():doc({ summary = "Score for resolved aliases" }),
+  score_tagged_from = T.number():optional():doc({ summary = "Score for tagged From addresses" }),
+  score_tagged_rcpt = T.number():optional():doc({ summary = "Score for tagged recipients" }),
+}):doc({ summary = "Aliases plugin configuration" })
+
+PluginSchema.register("plugins.aliases", settings_schema)
+
 --- Helper to update address fields after resolution
 -- @param addr address table
 -- @param new_user new user part
@@ -505,6 +535,15 @@ end
 local opts = rspamd_config:get_all_opt(N)
 if opts then
   settings = lua_util.override_defaults(settings, opts)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
 
   if settings.enabled then
     -- Initialize lua_aliases library

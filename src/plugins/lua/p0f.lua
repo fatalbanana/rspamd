@@ -21,6 +21,8 @@ local lua_util = require "lua_util"
 local lua_redis = require "lua_redis"
 local rspamd_logger = require "rspamd_logger"
 local p0f = require("lua_scanners").filter('p0f').p0f
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local N = 'p0f'
 
@@ -59,6 +61,28 @@ if confighelp then
   return
 end
 
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  enabled = T.boolean():optional():doc({ summary = "Enable the plugin" }),
+  socket = T.string():optional():doc({ summary = "Path to the unix socket that p0f listens on" }),
+  timeout = T.one_of({
+    T.number({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Connection timeout" }),
+  symbol = T.string():optional():doc({ summary = "Symbol to insert with lookup results" }),
+  symbol_fail = T.string():optional():doc({ summary = "Symbol for p0f failure" }),
+  patterns = T.table({}, { open = true }):optional()
+    :doc({ summary = "Patterns to match against p0f results (symbol name -> regex)" }),
+  expire = T.integer({ min = 0 }):optional():doc({ summary = "Cache lifetime in seconds" }),
+  prefix = T.string():optional():doc({ summary = "Cache key prefix" }),
+  name = T.string():optional():doc({ summary = "Scanner name for logging" }),
+  detection_category = T.string():optional():doc({ summary = "Detection category" }),
+  message = T.string():optional():doc({ summary = "Message template for results" }),
+  log_prefix = T.string():optional():doc({ summary = "Log prefix" }),
+}):doc({ summary = "P0f plugin configuration" })
+
+PluginSchema.register("plugins.p0f", settings_schema)
+
 local rule
 
 local function check_p0f(task)
@@ -72,6 +96,20 @@ local function check_p0f(task)
 end
 
 local opts = rspamd_config:get_all_opt(N)
+
+if not opts then
+  lua_util.disable_module(N, "config")
+  return
+end
+
+-- Validate settings with lua_shape
+local res, err = settings_schema:transform(opts)
+if not res then
+  rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+  lua_util.disable_module(N, "config")
+  return
+end
+opts = res
 
 rule = p0f.configure(opts)
 

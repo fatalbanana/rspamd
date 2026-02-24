@@ -22,6 +22,8 @@ local rspamd_util = require "rspamd_util"
 local lua_redis = require "lua_redis"
 local lua_util = require "lua_util"
 local dmarc_common = require "plugins/dmarc"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 if confighelp then
   return
@@ -30,6 +32,33 @@ end
 local N = 'dmarc'
 
 local settings = dmarc_common.default_settings
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  symbols = T.table({}, { open = true }):optional():doc({ summary = "Symbol names mapping" }),
+  no_sampling_domains = T.string():optional():doc({ summary = "Domains not to apply DMARC sampling" }),
+  no_reporting_domains = T.string():optional():doc({ summary = "Domains not to store DMARC reports" }),
+  actions = T.table({}, { open = true }):optional():doc({ summary = "Actions for DMARC dispositions" }),
+  reporting = T.table({
+    enabled = T.boolean():optional():doc({ summary = "Enable DMARC reporting" }),
+    report_local_controller = T.boolean():optional():doc({ summary = "Store reports for local scans" }),
+    helo = T.string():optional():doc({ summary = "HELO for reporting SMTP" }),
+    smtp = T.string():optional():doc({ summary = "SMTP server for reporting" }),
+    smtp_port = T.integer({ min = 1, max = 65535 }):optional():doc({ summary = "SMTP port for reporting" }),
+    retries = T.integer({ min = 0 }):optional():doc({ summary = "SMTP retries" }),
+    from_name = T.string():optional():doc({ summary = "From name for reports" }),
+    msgid_from = T.string():optional():doc({ summary = "Message-ID from domain" }),
+    max_entries = T.integer({ min = 1 }):optional():doc({ summary = "Max entries per report" }),
+    keys_expire = T.integer({ min = 1 }):optional():doc({ summary = "Report keys expiry" }),
+    only_domains = T.string():optional():doc({ summary = "Only report for these domains" }),
+    exclude_domains = T.string():optional():doc({ summary = "Exclude domains from reporting" }),
+    exclude_recipients = T.string():optional():doc({ summary = "Exclude recipients from reporting" }),
+    exclude_rua_addresses = T.string():optional():doc({ summary = "Exclude RUA addresses from reporting" }),
+  }, { open = true }):optional():doc({ summary = "DMARC reporting configuration" }),
+  munging = T.table({}, { open = true }):optional():doc({ summary = "DMARC munging configuration" }),
+}):doc({ summary = "DMARC plugin configuration" })
+
+PluginSchema.register("plugins.dmarc", settings_schema)
 
 local redis_params = nil
 
@@ -604,6 +633,14 @@ end
 
 local opts = rspamd_config:get_all_opt('dmarc')
 settings = lua_util.override_defaults(settings, opts)
+
+-- Validate settings with lua_shape
+local res, err = settings_schema:transform(settings)
+if not res then
+  rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+  return
+end
+settings = res
 
 settings.auth_and_local_conf = lua_util.config_check_local_or_authed(rspamd_config, N,
   false, false)

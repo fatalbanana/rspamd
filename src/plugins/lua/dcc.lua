@@ -25,6 +25,32 @@ local opts = rspamd_config:get_all_opt(N)
 local lua_util = require "lua_util"
 local rspamd_logger = require "rspamd_logger"
 local dcc = require("lua_scanners").filter('dcc').dcc
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  socket = T.string():optional():doc({ summary = "Unix socket path for DCC" }),
+  servers = T.string():optional():doc({ summary = "TCP upstream servers for DCC" }),
+  timeout = T.one_of({
+    T.number({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Timeout to wait for DCC checks" }),
+  body_max = T.integer({ min = 0 }):optional():doc({ summary = "Bulkness threshold for body" }),
+  fuz1_max = T.integer({ min = 0 }):optional():doc({ summary = "Bulkness threshold for fuz1" }),
+  fuz2_max = T.integer({ min = 0 }):optional():doc({ summary = "Bulkness threshold for fuz2" }),
+  symbol_bulk = T.string():optional():doc({ summary = "Symbol for bulk mail detected by DCC" }),
+  symbol = T.string():optional():doc({ summary = "Symbol for rejected mail by DCC" }),
+  symbol_fail = T.string():optional():doc({ summary = "Symbol for DCC failure" }),
+  log_clean = T.boolean():optional():doc({ summary = "Log clean messages" }),
+  retransmits = T.integer({ min = 0 }):optional():doc({ summary = "Number of retransmits on failure" }),
+  cache_expire = T.integer({ min = 0 }):optional():doc({ summary = "Cache expiry time in seconds" }),
+  message = T.string():optional():doc({ summary = "Message template for DCC results" }),
+  default_score = T.number():optional():doc({ summary = "Default score for DCC results" }),
+  client = T.string():optional():doc({ summary = "Client IP override for DCC" }),
+}):doc({ summary = "DCC plugin configuration" })
+
+PluginSchema.register("plugins.dcc", settings_schema)
 
 if confighelp then
   rspamd_config:add_example(nil, 'dcc',
@@ -77,6 +103,15 @@ end
 if not opts.symbol then
   opts.symbol = symbol
 end
+
+-- Validate settings with lua_shape
+local res, err = settings_schema:transform(opts)
+if not res then
+  rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+  lua_util.disable_module(N, "config")
+  return
+end
+opts = res
 
 rule = dcc.configure(opts)
 

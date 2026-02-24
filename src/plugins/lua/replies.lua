@@ -24,6 +24,8 @@ local hash = require 'rspamd_cryptobox_hash'
 local lua_util = require 'lua_util'
 local lua_redis = require 'lua_redis'
 local fun = require "fun"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 -- A plugin that implements replies check using redis
 
@@ -54,6 +56,40 @@ local settings = {
   reply_sender_privacy_prefix = 'obf',
   reply_sender_privacy_length = 16,
 }
+
+local settings_schema = lua_redis.enrich_schema({
+  action = T.string():optional():doc({ summary = "Action to take on reply match" }),
+  expire = T.one_of({
+    T.number(),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Time interval for reply expiration (seconds)" }),
+  key_prefix = T.string():optional():doc({ summary = "Redis key prefix for replies" }),
+  key_size = T.number():optional():doc({ summary = "Length of hashed message-id keys" }),
+  sender_prefix = T.string():optional():doc({ summary = "Redis prefix for sender reply sets" }),
+  sender_key_global = T.string():optional():doc({ summary = "Redis key for global verified senders" }),
+  sender_key_size = T.number():optional():doc({ summary = "Length of hashed sender keys" }),
+  message = T.string():optional():doc({ summary = "Message for action on reply match" }),
+  symbol = T.string():optional():doc({ summary = "Symbol to insert on reply match" }),
+  score = T.number():optional():doc({ summary = "Default score for reply symbol" }),
+  max_local_size = T.number():optional():doc({ summary = "Maximum size of local replies set" }),
+  max_global_size = T.number():optional():doc({ summary = "Maximum size of global replies set" }),
+  use_auth = T.boolean():optional():doc({ summary = "Use authenticated user for replies set" }),
+  use_local = T.boolean():optional():doc({ summary = "Use local IP for replies set" }),
+  cookie = T.string():optional():doc({ summary = "Cookie value for cookie-based replies" }),
+  cookie_key = T.string():optional():doc({ summary = "Cookie encryption key (32 hex digits)" }),
+  cookie_is_pattern = T.boolean():optional():doc({ summary = "Treat cookie as pattern" }),
+  cookie_valid_time = T.one_of({
+    T.number(),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Cookie validity time interval (seconds)" }),
+  min_message_id = T.number():optional():doc({ summary = "Minimum length of message-id header" }),
+  reply_sender_privacy = T.boolean():optional():doc({ summary = "Enable sender privacy mode" }),
+  reply_sender_privacy_alg = T.string():optional():doc({ summary = "Hash algorithm for sender privacy" }),
+  reply_sender_privacy_prefix = T.string():optional():doc({ summary = "Prefix for hashed sender keys" }),
+  reply_sender_privacy_length = T.number():optional():doc({ summary = "Length of hashed sender output" }),
+}):doc({ summary = "Replies plugin configuration" })
+
+PluginSchema.register("plugins.replies", settings_schema)
 
 local N = "replies"
 
@@ -361,6 +397,13 @@ if not (opts and type(opts) == 'table') then
 end
 if opts then
   settings = lua_util.override_defaults(settings, opts)
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
   redis_params = lua_redis.parse_redis_server('replies')
   if not redis_params then
     if not (settings.cookie and settings.cookie_key) then

@@ -17,6 +17,11 @@ limitations under the License.
 -- Plugin for comparing smtp dialog recipients and sender with recipients and sender
 -- in mime headers
 
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
+local rspamd_logger = require "rspamd_logger"
+local lua_util = require "lua_util"
+
 if confighelp then
   rspamd_config:add_example(nil, 'forged_recipients',
       "Check forged recipients and senders (e.g. mime and smtp recipients mismatch)",
@@ -33,6 +38,14 @@ local symbol_sender = 'FORGED_SENDER'
 local rspamd_util = require "rspamd_util"
 
 local E = {}
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  symbol_sender = T.string():optional():doc({ summary = "Symbol for forged sender detection" }),
+  symbol_rcpt = T.string():optional():doc({ summary = "Symbol for forged recipients detection" }),
+}):doc({ summary = "Forged recipients plugin configuration" })
+
+PluginSchema.register("plugins.forged_recipients", settings_schema)
 
 local function check_forged_headers(task)
   local auser = task:get_user()
@@ -153,31 +166,45 @@ local function check_forged_headers(task)
 end
 
 -- Configuration
-local opts = rspamd_config:get_all_opt('forged_recipients')
+local N = "forged_recipients"
+local settings = {
+  symbol_sender = 'FORGED_SENDER',
+  symbol_rcpt = 'FORGED_RECIPIENTS',
+}
+
+local opts = rspamd_config:get_all_opt(N)
 if opts then
-  if opts['symbol_rcpt'] or opts['symbol_sender'] then
-    local id = rspamd_config:register_symbol({
-      name = 'FORGED_CALLBACK',
-      callback = check_forged_headers,
-      type = 'callback',
-      group = 'headers',
-      score = 0.0,
-    })
-    if opts['symbol_rcpt'] then
-      symbol_rcpt = opts['symbol_rcpt']
-      rspamd_config:register_symbol({
-        name = symbol_rcpt,
-        type = 'virtual',
-        parent = id,
-      })
-    end
-    if opts['symbol_sender'] then
-      symbol_sender = opts['symbol_sender']
-      rspamd_config:register_symbol({
-        name = symbol_sender,
-        type = 'virtual',
-        parent = id,
-      })
-    end
+  settings = lua_util.override_defaults(settings, opts)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
   end
+  settings = res
+
+  symbol_rcpt = settings.symbol_rcpt
+  symbol_sender = settings.symbol_sender
+
+  local id = rspamd_config:register_symbol({
+    name = 'FORGED_CALLBACK',
+    callback = check_forged_headers,
+    type = 'callback',
+    group = 'headers',
+    score = 0.0,
+  })
+
+  rspamd_config:register_symbol({
+    name = symbol_rcpt,
+    type = 'virtual',
+    parent = id,
+  })
+
+  rspamd_config:register_symbol({
+    name = symbol_sender,
+    type = 'virtual',
+    parent = id,
+  })
 end

@@ -24,6 +24,9 @@ local hash = require "rspamd_cryptobox_hash"
 local rspamd_url = require "rspamd_url"
 local lua_util = require "lua_util"
 local lua_redis = require "lua_redis"
+local lua_maps = require "lua_maps"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 local N = "url_redirector"
 
 -- Some popular UA
@@ -57,6 +60,32 @@ local settings = {
   top_urls_count = 200, -- how many top urls to save
   redirector_hosts_map = nil -- check only those redirectors
 }
+
+local settings_schema = lua_redis.enrich_schema({
+  expire = T.one_of({
+    T.number(),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Cache expiry time in seconds" }),
+  timeout = T.number():optional():doc({ summary = "HTTP request timeout in seconds" }),
+  nested_limit = T.integer():optional():doc({ summary = "Maximum redirect chain length" }),
+  proxy = T.string():optional():doc({ summary = "HTTP proxy URL for requests" }),
+  key_prefix = T.string():optional():doc({ summary = "Redis key prefix" }),
+  check_ssl = T.boolean():optional():doc({ summary = "Verify SSL certificates" }),
+  max_urls = T.integer():optional():doc({ summary = "Maximum URLs to process per message" }),
+  max_size = T.number():optional():doc({ summary = "Maximum body size to process" }),
+  user_agent = T.one_of({
+    T.string(),
+    T.array(T.string())
+  }):optional():doc({ summary = "User-Agent header(s) for HTTP requests" }),
+  redirector_symbol = T.string():optional():doc({ summary = "Symbol to insert for redirect URLs" }),
+  redirector_symbol_nested = T.string():optional():doc({ summary = "Symbol for nested redirect limit" }),
+  redirectors_only = T.boolean():optional():doc({ summary = "Only follow redirector hosts" }),
+  top_urls_key = T.string():optional():doc({ summary = "Redis key for top URLs" }),
+  top_urls_count = T.integer():optional():doc({ summary = "Maximum top URLs to track" }),
+  redirector_hosts_map = lua_maps.map_schema:optional():doc({ summary = "Map of redirector hostnames" }),
+}):doc({ summary = "URL redirector plugin configuration" })
+
+PluginSchema.register("plugins.url_redirector", settings_schema)
 
 --[[
 Encode characters that are not allowed in URLs according to RFC 3986
@@ -452,6 +481,14 @@ end
 local opts = rspamd_config:get_all_opt('url_redirector')
 if opts then
   settings = lua_util.override_defaults(settings, opts)
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.errx(rspamd_config, 'invalid %s config: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
+
   redis_params = lua_redis.parse_redis_server('url_redirector', settings)
 
   if not redis_params then
@@ -463,7 +500,6 @@ if opts then
       rspamd_logger.infox(rspamd_config, 'no redirector_hosts_map option is specified, disabling module')
       lua_util.disable_module(N, "config")
     else
-      local lua_maps = require "lua_maps"
       settings.redirector_hosts_map = lua_maps.map_add_from_ucl(settings.redirector_hosts_map,
           'set', 'Redirectors definitions')
 

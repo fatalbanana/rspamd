@@ -33,12 +33,26 @@ local lua_util = require "lua_util"
 local rspamd_logger = require "rspamd_logger"
 local lua_redis = require "lua_redis"
 local N = "maps_stats"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local settings = {
   interval = 120, -- one iteration step per 2 minutes
   count = 1000, -- how many elements to store in Redis
   prefix = 'rm_', -- common prefix for elements
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  interval = T.one_of({
+    T.number({ min = 0 }),
+    T.transform(T.string(), lua_util.parse_time_interval)
+  }):optional():doc({ summary = "Interval between iterations in seconds" }),
+  count = T.integer({ min = 0 }):optional():doc({ summary = "Maximum number of elements to store in Redis" }),
+  prefix = T.string():optional():doc({ summary = "Common prefix for Redis keys" }),
+}):doc({ summary = "Maps statistics plugin configuration" })
+
+PluginSchema.register("plugins.maps_stats", settings_schema)
 
 local function process_map(map, ev_base, _)
   if map:get_nelts() > 0 and map:get_uri() ~= 'static' then
@@ -99,9 +113,16 @@ end
 local opts = rspamd_config:get_all_opt(N)
 
 if opts then
-  for k, v in pairs(opts) do
-    settings[k] = v
+  settings = lua_util.override_defaults(settings, opts)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
   end
+  settings = res
 end
 
 redis_params = lua_redis.parse_redis_server(N, opts)

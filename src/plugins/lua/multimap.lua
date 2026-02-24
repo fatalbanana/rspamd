@@ -32,7 +32,102 @@ local lua_maps = require "lua_maps"
 local lua_mime = require "lua_mime"
 local redis_params
 local fun = require "fun"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 local N = 'multimap'
+
+-- Valid multimap rule types
+local valid_types = {
+  "ip", "dnsbl", "header", "rcpt", "from", "helo", "url",
+  "filename", "content", "hostname", "asn", "country", "mempool",
+  "selector", "combined", "regexp_rules", "user", "symbol_options", "received"
+}
+
+-- Common fields for all rule types
+local rule_common_schema = {
+  type = T.enum(valid_types):doc({ summary = "Rule type" }),
+  symbol = T.string():optional():doc({ summary = "Symbol name (inferred from key if not set)" }),
+  description = T.string():optional():doc({ summary = "Rule description" }),
+  score = T.number():optional():doc({ summary = "Score multiplier" }),
+  action = T.string():optional():doc({ summary = "Action to take on match" }),
+  message = T.string():optional():doc({ summary = "Message for action" }),
+  message_func = T.string():optional():doc({ summary = "Lua function for dynamic message" }),
+  regexp = T.boolean():optional():doc({ summary = "Treat map as regexp map" }),
+  glob = T.boolean():optional():doc({ summary = "Treat map as glob map" }),
+  multi = T.boolean():optional():doc({ summary = "Allow multiple matches per key" }),
+  filter = T.string():optional():doc({ summary = "Filter to apply before matching" }),
+  expression = T.string():optional():doc({ summary = "Rspamd expression for conditional matching" }),
+  require_symbols = T.boolean():optional():doc({ summary = "Require symbols to be defined" }),
+  enabled = T.boolean():optional():doc({ summary = "Enable this rule" }),
+}
+
+-- Schema for a single multimap rule (table with type-specific requirements)
+local rule_schema = T.table({
+  -- Core fields
+  type = rule_common_schema.type,
+  symbol = rule_common_schema.symbol,
+  description = rule_common_schema.description,
+  score = rule_common_schema.score,
+  action = rule_common_schema.action,
+  message = rule_common_schema.message,
+  message_func = rule_common_schema.message_func,
+  regexp = rule_common_schema.regexp,
+  glob = rule_common_schema.glob,
+  multi = rule_common_schema.multi,
+  filter = rule_common_schema.filter,
+  expression = rule_common_schema.expression,
+  require_symbols = rule_common_schema.require_symbols,
+  enabled = rule_common_schema.enabled,
+
+  -- Map source (string or table)
+  map = T.one_of({
+    T.string(),
+    T.table({}),
+  }):optional():doc({ summary = "Map source URL or configuration" }),
+  url = T.string():optional():doc({ summary = "Map URL (alias for map)" }),
+
+  -- Type-specific fields
+  header = T.one_of({ T.string(), T.array(T.string()) }):optional():doc({ summary = "Header name(s) for header type" }),
+  variable = T.string():optional():doc({ summary = "Mempool variable for mempool type" }),
+  selector = T.string():optional():doc({ summary = "Selector expression for selector type" }),
+  delimiter = T.string():optional():doc({ summary = "Delimiter for selector" }),
+  combinator = T.string():optional():doc({ summary = "Combinator for selector output" }),
+  target_symbol = T.string():optional():doc({ summary = "Target symbol for symbol_options type" }),
+  redis_key = T.string():optional():doc({ summary = "Redis key pattern" }),
+
+  -- Combined type fields
+  rules = T.table({}, { open = true }):optional():doc({ summary = "Rules for combined type" }),
+  dynamic_symbols = T.boolean():optional():doc({ summary = "Register symbols dynamically" }),
+
+  -- Filename type fields
+  skip_archives = T.boolean():optional():doc({ summary = "Skip archive contents" }),
+  skip_detected = T.boolean():optional():doc({ summary = "Skip detected extensions" }),
+
+  -- DNSBL type fields
+  process = T.string():optional():doc({ summary = "Processing mode" }),
+
+  -- Received type fields
+  min_pos = T.integer():optional():doc({ summary = "Minimum position in received headers" }),
+  max_pos = T.integer():optional():doc({ summary = "Maximum position in received headers" }),
+  artificial = T.boolean():optional():doc({ summary = "Include artificial received headers" }),
+
+  -- From/rcpt type fields
+  extract_from = T.enum({ "default", "mime", "smtp", "both" }):optional():doc({ summary = "Extract addresses from" }),
+
+  -- Multi-symbol support
+  symbols_set = T.array(T.string()):optional():doc({ summary = "Allowed symbols from map values" }),
+  disable_multisymbol = T.boolean():optional():doc({ summary = "Disable multi-symbol output" }),
+}, { open = true }):doc({ summary = "Multimap rule configuration" })
+
+-- Settings schema for lua_shape validation
+-- Multimap configuration is a table of named rules
+local settings_schema = T.table({}, { open = true }):doc({
+  summary = "Multimap plugin configuration",
+  description = "Configuration consists of named rule definitions. " ..
+      "Each key is the rule/symbol name, value is a table with 'type' and 'map' fields."
+})
+
+PluginSchema.register("plugins.multimap", settings_schema)
 
 -- SpamAssassin-like functionality
 local sa_atoms = {}
@@ -2346,6 +2441,32 @@ end
 local opts = rspamd_config:get_all_opt(N)
 if opts and type(opts) == 'table' then
   redis_params = rspamd_parse_redis_server(N)
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(opts)
+  if not res then
+    rspamd_logger.errx(rspamd_config, 'invalid %s config: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+
+  -- Validate each rule individually
+  local rule_errors = {}
+  for rule_name, rule_config in pairs(opts) do
+    if type(rule_config) == 'table' then
+      local rule_res, rule_err = rule_schema:transform(rule_config)
+      if not rule_res then
+        table.insert(rule_errors, string.format("rule '%s': %s", rule_name, T.format_error(rule_err)))
+      end
+    end
+  end
+
+  if #rule_errors > 0 then
+    rspamd_logger.errx(rspamd_config, 'invalid %s config - %d rule(s) have errors:\n  %s',
+        N, #rule_errors, table.concat(rule_errors, '\n  '))
+    lua_util.disable_module(N, "config")
+    return
+  end
 
   -- Initialize regexp_rules symbol states from existing sa_atoms and sa_meta_rules
   -- This helps with module reload scenarios

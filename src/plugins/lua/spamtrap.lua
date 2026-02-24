@@ -20,9 +20,11 @@ limitations under the License.
 local rspamd_logger = require "rspamd_logger"
 local redis_params
 local use_redis = false;
-local M = 'spamtrap'
+local N = 'spamtrap'
 local lua_util = require "lua_util"
 local fun = require "fun"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 local settings = {
   symbol = 'SPAMTRAP',
@@ -34,6 +36,23 @@ local settings = {
   key_prefix = 'sptr_',
   allow_multiple_rcpts = false,
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  symbol = T.string():optional():doc({ summary = "Symbol to insert on spamtrap match" }),
+  score = T.number():optional():doc({ summary = "Score for the spamtrap symbol" }),
+  learn_fuzzy = T.boolean():optional():doc({ summary = "Learn fuzzy hash on spamtrap match" }),
+  learn_spam = T.boolean():optional():doc({ summary = "Learn as spam on spamtrap match" }),
+  fuzzy_flag = T.number():optional():doc({ summary = "Fuzzy flag for learning" }),
+  fuzzy_weight = T.number():optional():doc({ summary = "Fuzzy weight for learning" }),
+  key_prefix = T.string():optional():doc({ summary = "Redis key prefix for spamtrap addresses" }),
+  allow_multiple_rcpts = T.boolean():optional():doc({ summary = "Allow checking multiple recipients" }),
+  action = T.string():optional():doc({ summary = "Action to take on spamtrap match" }),
+  smtp_message = T.string():optional():doc({ summary = "Custom SMTP message for action" }),
+  map = T.string():optional():doc({ summary = "Path to spamtrap addresses map" }),
+}):doc({ summary = "Spamtrap plugin configuration" })
+
+PluginSchema.register("plugins.spamtrap", settings_schema)
 
 local check_authed = true
 local check_local = true
@@ -113,7 +132,7 @@ local function spamtrap_cb(task)
           end
           called_for_domain = true
         else
-          lua_util.debugm(M, task, 'skip spamtrap for %s', target)
+          lua_util.debugm(N, task, 'skip spamtrap for %s', target)
         end
       end
     end
@@ -147,7 +166,7 @@ local function spamtrap_cb(task)
         end
       end
       if not fun.any(check_map_functor, targets) then
-        lua_util.debugm(M, task, 'skip spamtrap')
+        lua_util.debugm(N, task, 'skip spamtrap')
       end
     end
   end
@@ -170,6 +189,16 @@ if opts then
   for k, v in pairs(opts) do
     settings[k] = v
   end
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
+
   if settings['map'] then
     settings['map'] = rspamd_config:add_map {
       url = settings['map'],

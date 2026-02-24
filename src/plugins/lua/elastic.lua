@@ -22,6 +22,8 @@ local rspamd_util = require "rspamd_util"
 local rspamd_text = require "rspamd_text"
 local ucl = require "ucl"
 local upstream_list = require "rspamd_upstream_list"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 
 if confighelp then
   return
@@ -160,6 +162,67 @@ local settings = {
   user = nil,
   password = nil,
 }
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  enabled = T.boolean():optional():doc({ summary = "Enable or disable the plugin" }),
+  version = T.table({
+    autodetect_enabled = T.boolean():optional():doc({ summary = "Enable automatic detection of Elastic/OpenSearch version" }),
+    autodetect_max_fail = T.integer():optional():doc({ summary = "Maximum failed attempts for version autodetection" }),
+    override = T.table({
+      name = T.string():optional():doc({ summary = "Override distribution name (elastic or opensearch)" }),
+      version = T.string():optional():doc({ summary = "Override version string" }),
+    }):optional():doc({ summary = "Override settings when autodetect is disabled" }),
+  }):optional():doc({ summary = "Version detection configuration" }),
+  limits = T.table({
+    max_rows = T.integer():optional():doc({ summary = "Maximum logs in one bulk request" }),
+    max_interval = T.integer():optional():doc({ summary = "Maximum interval in seconds before flushing buffer" }),
+    max_fail = T.integer():optional():doc({ summary = "Maximum failed attempts before giving up" }),
+  }):optional():doc({ summary = "Limits configuration" }),
+  index_template = T.table({
+    managed = T.boolean():optional():doc({ summary = "Manage index template automatically" }),
+    name = T.string():optional():doc({ summary = "Index template name" }),
+    pattern = T.string():optional():doc({ summary = "Index pattern" }),
+    priority = T.integer():optional():doc({ summary = "Index template priority" }),
+    shards_count = T.integer():optional():doc({ summary = "Number of shards" }),
+    replicas_count = T.integer():optional():doc({ summary = "Number of replicas" }),
+    refresh_interval = T.integer():optional():doc({ summary = "Refresh interval in seconds" }),
+    dynamic_keyword_ignore_above = T.integer():optional():doc({ summary = "Ignore above for dynamic keywords" }),
+    headers_count_ignore_above = T.integer():optional():doc({ summary = "Maximum same-named headers to record" }),
+    headers_text_ignore_above = T.integer():optional():doc({ summary = "Maximum header text length" }),
+    symbols_nested = T.boolean():optional():doc({ summary = "Use nested type for symbols" }),
+    empty_value = T.string():optional():doc({ summary = "Default value for empty fields" }),
+  }):optional():doc({ summary = "Index template configuration" }),
+  index_policy = T.table({
+    enabled = T.boolean():optional():doc({ summary = "Enable index lifecycle policy" }),
+    managed = T.boolean():optional():doc({ summary = "Manage lifecycle policy automatically" }),
+    name = T.string():optional():doc({ summary = "Lifecycle policy name" }),
+    hot = T.table({}, { open = true }):optional():doc({ summary = "Hot phase configuration" }),
+    warm = T.table({}, { open = true }):optional():doc({ summary = "Warm phase configuration" }),
+    cold = T.table({}, { open = true }):optional():doc({ summary = "Cold phase configuration" }),
+    delete = T.table({}, { open = true }):optional():doc({ summary = "Delete phase configuration" }),
+  }):optional():doc({ summary = "Index lifecycle policy configuration" }),
+  collect_headers = T.array(T.string()):optional():doc({ summary = "Headers to collect from messages" }),
+  extra_collect_headers = T.array(T.string()):optional():doc({ summary = "Additional headers to collect" }),
+  geoip = T.table({
+    enabled = T.boolean():optional():doc({ summary = "Enable GeoIP enrichment" }),
+    managed = T.boolean():optional():doc({ summary = "Manage GeoIP pipeline automatically" }),
+    pipeline_name = T.string():optional():doc({ summary = "GeoIP pipeline name" }),
+  }):optional():doc({ summary = "GeoIP configuration" }),
+  periodic_interval = T.number():optional():doc({ summary = "Periodic check interval in seconds" }),
+  timeout = T.number():optional():doc({ summary = "HTTP request timeout in seconds" }),
+  use_https = T.boolean():optional():doc({ summary = "Use HTTPS for connections" }),
+  no_ssl_verify = T.boolean():optional():doc({ summary = "Disable SSL certificate verification" }),
+  use_gzip = T.boolean():optional():doc({ summary = "Use gzip compression for requests" }),
+  use_keepalive = T.boolean():optional():doc({ summary = "Use HTTP keepalive" }),
+  allow_local = T.boolean():optional():doc({ summary = "Allow logging for local requests" }),
+  user = T.string():optional():doc({ summary = "Username for authentication" }),
+  password = T.string():optional():doc({ summary = "Password for authentication" }),
+  server = T.string():optional():doc({ summary = "Elastic server address" }),
+  servers = T.string():optional():doc({ summary = "Elastic servers addresses (comma-separated)" }),
+}):doc({ summary = "Elastic plugin configuration" })
+
+PluginSchema.register("plugins.elastic", settings_schema)
 
 local Queue = {}
 Queue.__index = Queue
@@ -1545,6 +1608,15 @@ if opts then
       settings[k] = v
     end
   end
+
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(settings)
+  if not res then
+    rspamd_logger.errx(rspamd_config, 'invalid %s config: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  settings = res
 
   if not settings['enabled'] then
     rspamd_logger.infox(rspamd_config, 'module disabled in config')

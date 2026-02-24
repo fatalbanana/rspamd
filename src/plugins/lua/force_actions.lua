@@ -31,6 +31,35 @@ local rspamd_cryptobox_hash = require "rspamd_cryptobox_hash"
 local rspamd_expression = require "rspamd_expression"
 local rspamd_logger = require "rspamd_logger"
 local lua_selectors = require "lua_selectors"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  -- Legacy configuration (deprecated but supported)
+  actions = T.table({}, { open = true }):optional():doc({ summary = "Legacy actions configuration (deprecated)" }),
+  messages = T.table({}, { open = true }):optional():doc({ summary = "Legacy messages mapping (deprecated)" }),
+  -- Modern rules configuration
+  rules = T.table({
+    action = T.string():doc({ summary = "Action to force (e.g. 'reject', 'add header')" }),
+    expression = T.string():doc({ summary = "Rspamd expression to evaluate" }),
+    message = T.string():optional():doc({ summary = "Message to set when action is forced" }),
+    subject = T.string():optional():doc({ summary = "Subject to set when action is forced" }),
+    require_action = T.one_of({
+      T.string(),
+      T.array(T.string())
+    }):optional():doc({ summary = "Action(s) required from metric to apply force" }),
+    honor_action = T.one_of({
+      T.string(),
+      T.array(T.string())
+    }):optional():doc({ summary = "Action(s) to honor (not override)" }),
+    limit = T.number():optional():doc({ summary = "Minimum expression result to trigger action" }),
+    least = T.boolean():optional():doc({ summary = "Use least critical action" }),
+    process_all = T.boolean():optional():doc({ summary = "Process all matching rules" }),
+  }, { open = true }):optional():doc({ summary = "Named rules for forcing actions" }),
+}):doc({ summary = "Force actions plugin configuration" })
+
+PluginSchema.register("plugins.force_actions", settings_schema)
 
 -- Params table fields:
 -- expr, act, pool, message, subject, raction, honor, limit, flags
@@ -128,6 +157,15 @@ local function configure_module()
   if not opts then
     return false
   end
+
+  -- Validate configuration with lua_shape
+  local res, err = settings_schema:transform(opts)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, T.format_error(err))
+    lua_util.disable_module(N, "config")
+    return false
+  end
+
   if type(opts.actions) == 'table' then
     rspamd_logger.warnx(rspamd_config, 'Processing legacy config')
     for action, expressions in pairs(opts.actions) do

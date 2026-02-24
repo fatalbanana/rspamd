@@ -31,6 +31,18 @@ local rspamd_trie = require "rspamd_trie"
 local util = require "rspamd_util"
 local lua_util = require "lua_util"
 local fun = require "fun"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
+
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  pcre_only = T.array(T.string()):optional():doc({ summary = "List of regexps that must use PCRE only" }),
+  alpha = T.number():optional():doc({ summary = "Minimum score to treat symbols as meta" }),
+  match_limit = T.number():optional():doc({ summary = "Maximum size of regexp checked" }),
+  scores_priority = T.number():optional():doc({ summary = "Priority of the scores registered in the metric" }),
+}, { open = true }):doc({ summary = "SpamAssassin plugin configuration" })
+
+PluginSchema.register("plugins.spamassassin", settings_schema)
 
 -- Known plugins
 local known_plugins = {
@@ -1703,6 +1715,15 @@ end
 local has_rules = false
 
 if type(section) == "table" then
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(section)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  section = res
+
   local keywords = {
     pcre_only = { 'table', function(v)
       pcre_only_regexps = lua_util.list_to_hash(v)

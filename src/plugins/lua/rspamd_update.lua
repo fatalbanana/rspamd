@@ -26,6 +26,8 @@ local rspamd_logger = require "rspamd_logger"
 local rspamd_config = rspamd_config
 local hash = require "rspamd_cryptobox_hash"
 local lua_util = require "lua_util"
+local T = require "lua_shape.core"
+local PluginSchema = require "lua_shape.plugin_schema"
 local N = "rspamd_update"
 local rspamd_version = rspamd_version
 local maps = {}
@@ -122,12 +124,37 @@ local function gen_callback()
   end
 end
 
+-- Settings schema for lua_shape validation
+local settings_schema = T.table({
+  rules = T.one_of({
+    T.string(),
+    T.array(T.string())
+  }):doc({ summary = "URL(s) or path(s) to rspamd updates map" }),
+  key = T.string():optional():doc({ summary = "Public key to verify signed updates" }),
+  priority = T.integer({ min = 0 }):optional():doc({ summary = "Priority for rules loaded from updates" }),
+}):doc({ summary = "Rspamd update plugin configuration" })
+
+PluginSchema.register("plugins.rspamd_update", settings_schema)
+
 -- Configuration part
 local section = rspamd_config:get_all_opt("rspamd_update")
 if section and section.rules then
+  -- Validate settings with lua_shape
+  local res, err = settings_schema:transform(section)
+  if not res then
+    rspamd_logger.warnx(rspamd_config, 'plugin %s is misconfigured: %s', N, err)
+    lua_util.disable_module(N, "config")
+    return
+  end
+  section = res
+
   local trusted_key
   if section.key then
     trusted_key = section.key
+  end
+
+  if section.priority then
+    global_priority = section.priority
   end
 
   if type(section.rules) ~= 'table' then
