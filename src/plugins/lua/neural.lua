@@ -379,7 +379,7 @@ local function ann_push_task_result(rule, task, verdict, score, set)
             if manual_train and has_llm_provider and not has_symbols_provider then
               target_key = neural_common.pending_train_key(rule, set) .. '_' .. learn_type .. '_set'
             else
-              target_key = set.ann.redis_key .. '_' .. learn_type .. '_set'
+              target_key = (set.training_profile or set.ann).redis_key .. '_' .. learn_type .. '_set'
             end
 
             local function learn_vec_cb(redis_err)
@@ -425,11 +425,11 @@ local function ann_push_task_result(rule, task, verdict, score, set)
         elseif type(data) == 'string' then
           -- nil return value
           rspamd_logger.infox(task, "cannot learn %s ANN %s:%s; redis_key: %s: locked for learning: %s",
-            learn_type, rule.prefix, set.name, set.ann.redis_key, data)
+            learn_type, rule.prefix, set.name, (set.training_profile or set.ann).redis_key, data)
         else
           rspamd_logger.errx(task, 'cannot check if we can train %s:%s : type of Redis key %s is %s, expected table' ..
             'please remove this key from Redis manually if you perform upgrade from the previous version',
-            rule.prefix, set.name, set.ann.redis_key, type(data))
+            rule.prefix, set.name, (set.training_profile or set.ann).redis_key, type(data))
         end
       end
     end
@@ -437,11 +437,12 @@ local function ann_push_task_result(rule, task, verdict, score, set)
     -- Check if we can learn
     -- For manual training, bypass can_store_vectors check (it may not be set yet)
     if set.can_store_vectors or manual_train then
-      if not set.ann then
-        -- Need to create or load a profile corresponding to the current configuration
+      if not set.ann and not set.training_profile then
+        -- No ANN and no best-known profile discovered by process_existing_ann
+        -- yet — bootstrap a fresh profile for the current configuration.
         set.ann = new_ann_profile(task, rule, set, 0)
         lua_util.debugm(N, task,
-          'requested new profile for %s, set.ann is missing (manual_train=%s)',
+          'requested new profile for %s, no ann/training target (manual_train=%s)',
           set.name, manual_train)
       end
 
@@ -449,7 +450,7 @@ local function ann_push_task_result(rule, task, verdict, score, set)
         { task = task, is_write = false },
         vectors_len_cb,
         {
-          set.ann.redis_key,
+          (set.training_profile or set.ann).redis_key,
         })
     else
       lua_util.debugm(N, task,
@@ -458,7 +459,7 @@ local function ann_push_task_result(rule, task, verdict, score, set)
   else
     lua_util.debugm(N, task,
       'do not push data to key %s: train condition not satisfied; reason: %s',
-      (set.ann or {}).redis_key,
+      (set.training_profile or set.ann or {}).redis_key,
       skip_reason)
   end
 end
@@ -945,6 +946,19 @@ local function process_existing_ann(_, ev_base, rule, set, profiles)
   end
 
   if sel_elt then
+    -- Track the best-known profile as the training target independently of
+    -- the currently loaded ANN (set.ann).  This lets training vectors flow
+    -- into a freshly-registered profile even while its ANN hasn't been
+    -- trained yet — otherwise workers keep writing to the last-loaded ANN's
+    -- key and the new profile's training sets stay empty forever.
+    set.training_profile = {
+      redis_key = sel_elt.redis_key,
+      version = sel_elt.version,
+      digest = sel_elt.digest,
+      symbols = sel_elt.symbols,
+      distance = min_diff,
+      providers_digest = sel_elt.providers_digest,
+    }
     -- We can load element from ANN
     if set.ann then
       -- We have an existing ANN, probably the same...
