@@ -2374,7 +2374,8 @@ accept_tcp_socket(EV_P_ ev_io *w, int revents)
 	}
 
 	/* Check if client is allowed */
-	if (!rspamd_fuzzy_check_client(ctx, addr)) {
+	int block_code = rspamd_fuzzy_check_client(ctx, addr);
+	if (block_code > 0) {
 		msg_info("refusing TCP connection from %s (blacklisted)",
 				 rspamd_inet_address_to_string(addr));
 		rspamd_inet_address_free(addr);
