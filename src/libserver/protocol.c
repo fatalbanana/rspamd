@@ -2576,6 +2576,53 @@ rspamd_protocol_handle_v3_request(struct rspamd_task *task,
 	gsize body_len = len;
 
 	/*
+	 * Register every HTTP request header as a task request header so Lua
+	 * code can retrieve arbitrary client-supplied headers via
+	 * task:get_request_header(), matching v2 semantics.  This must also
+	 * happen before response serialization, since the v3 reply path reads
+	 * Accept / Accept-Encoding through the same API.
+	 *
+	 * Skip Shm / Shm-Offset / Shm-Length: at the HTTP level these carry the
+	 * proxy-to-upstream body transfer, but as task request headers they
+	 * would collide with the metadata-synthesized "shm" zero-copy message
+	 * pointer and make rspamd_task_load_message pick the wrong source.
+	 */
+	for (khiter_t kit = kh_begin(msg->headers); kit != kh_end(msg->headers); ++kit) {
+		if (!kh_exist(msg->headers, kit)) {
+			continue;
+		}
+
+		struct rspamd_http_header *header = kh_val(msg->headers, kit);
+		struct rspamd_http_header *h;
+
+		DL_FOREACH(header, h)
+		{
+			if ((h->name.len == 3 &&
+				 rspamd_lc_cmp(h->name.begin, "shm", 3) == 0) ||
+				(h->name.len == 10 &&
+				 (rspamd_lc_cmp(h->name.begin, "shm-offset", 10) == 0 ||
+				  rspamd_lc_cmp(h->name.begin, "shm-length", 10) == 0))) {
+				continue;
+			}
+
+			char *ntok;
+			rspamd_ftok_t *hn_tok, *hv_tok;
+
+			ntok = rspamd_mempool_ftokdup(task->task_pool, &h->name);
+			hn_tok = rspamd_mempool_alloc(task->task_pool, sizeof(*hn_tok));
+			hn_tok->begin = ntok;
+			hn_tok->len = h->name.len;
+
+			ntok = rspamd_mempool_ftokdup(task->task_pool, &h->value);
+			hv_tok = rspamd_mempool_alloc(task->task_pool, sizeof(*hv_tok));
+			hv_tok->begin = ntok;
+			hv_tok->len = h->value.len;
+
+			rspamd_task_add_request_header(task, hn_tok, hv_tok);
+		}
+	}
+
+	/*
 	 * When the proxy forwards to a local upstream, it uses shared memory
 	 * (GET + Shm/Shm-Offset/Shm-Length headers) instead of sending the
 	 * body inline.  In that case chunk/len are empty, so we must read
