@@ -27,6 +27,22 @@ checkv3 with settings_id
   Scan File V3  ${GTUBE}  metadata=${meta}
   Expect Symbol  GTUBE
 
+checkv3 inline metadata.settings injects symbol
+  [Documentation]  Inline metadata.settings must run apply_settings_side_effects
+  ...              so settings.symbols actually fires (issue #5999)
+  ${settings_obj} =  Evaluate  {"symbols": {"INLINE_V3_TEST": 1.0}}
+  &{meta} =  Create Dictionary  settings=${settings_obj}
+  Scan File V3  ${GTUBE}  metadata=${meta}
+  Expect Symbol  INLINE_V3_TEST
+
+checkv3 inline metadata.settings overrides reject threshold
+  [Documentation]  Inline metadata.settings.actions must invoke the C-side
+  ...              action threshold apply path (issue #5999)
+  ${settings_obj} =  Evaluate  {"actions": {"reject": 1.0}}
+  &{meta} =  Create Dictionary  settings=${settings_obj}
+  Scan File V3  ${GTUBE}  metadata=${meta}
+  Expect Action  reject
+
 checkv3 missing metadata part
   [Documentation]  Send only message part without metadata, expect HTTP 500 (400 error mapped to 5xx)
   ${status} =  Scan File V3 Single Part  message  test message body

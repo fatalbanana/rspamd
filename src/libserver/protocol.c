@@ -2429,7 +2429,14 @@ rspamd_protocol_handle_metadata(struct rspamd_task *task,
 	/* deliver_to */
 	elt = ucl_object_lookup(metadata, "deliver_to");
 	if (elt && ucl_object_type(elt) == UCL_STRING) {
-		task->deliver_to = rspamd_mempool_strdup(task->task_pool, ucl_object_tostring(elt));
+		size_t deliver_len;
+		const char *deliver_str = ucl_object_tolstring(elt, &deliver_len);
+
+		if (deliver_len > 0) {
+			rspamd_ftok_t deliver_tok = {.begin = deliver_str, .len = deliver_len};
+			/* Match v2 Deliver-To header semantics: strip <...> braces */
+			task->deliver_to = rspamd_protocol_escape_braces(task, &deliver_tok);
+		}
 	}
 
 	/* settings_id */
@@ -2444,9 +2451,40 @@ rspamd_protocol_handle_metadata(struct rspamd_task *task,
 	if (elt && ucl_object_type(elt) == UCL_OBJECT) {
 		if (task->settings_elt) {
 			msg_info_protocol("both settings_id and inline settings present, "
-							  "settings will be merged");
+							  "inline settings will take precedence");
 		}
-		task->settings = ucl_object_ref(elt);
+
+		/*
+		 * Serialize the inline UCL settings to JSON and synthesize a 'settings'
+		 * request header so the existing settings.lua check_query_settings
+		 * pipeline picks them up and runs the apply path uniformly with the v2
+		 * Settings HTTP header. Without this, action thresholds, symbols
+		 * enable/disable lists, subject rewriting, etc. would never take
+		 * effect on /checkv3.
+		 */
+		size_t json_len = 0;
+		unsigned char *json = ucl_object_emit_len(elt, UCL_EMIT_JSON_COMPACT,
+												  &json_len);
+
+		if (json && json_len > 0) {
+			char *val_dup = rspamd_mempool_alloc(task->task_pool, json_len);
+			memcpy(val_dup, json, json_len);
+
+			rspamd_ftok_t *name_tok = rspamd_mempool_alloc(task->task_pool,
+														   sizeof(*name_tok));
+			rspamd_ftok_t *val_tok = rspamd_mempool_alloc(task->task_pool,
+														  sizeof(*val_tok));
+
+			RSPAMD_FTOK_ASSIGN(name_tok, SETTINGS_HEADER);
+			val_tok->begin = val_dup;
+			val_tok->len = json_len;
+
+			rspamd_task_add_request_header(task, name_tok, val_tok);
+		}
+
+		if (json) {
+			free(json);
+		}
 	}
 
 	/* tls.cipher - sets SSL flag */
