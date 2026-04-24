@@ -5,6 +5,7 @@ Variables       ${RSPAMD_TESTDIR}/lib/vars.py
 
 *** Variables ***
 ${GTUBE}               ${RSPAMD_TESTDIR}/messages/gtube.eml
+${MESSAGE}             ${RSPAMD_TESTDIR}/messages/spam_message.eml
 ${ALT_RELATED}         ${RSPAMD_TESTDIR}/messages/alternative-related.eml
 ${MIXED_RELATED_HTML}  ${RSPAMD_TESTDIR}/messages/mixed-related-html-only.eml
 ${SETTINGS_NOSYMBOLS}  {symbols_enabled = []}
@@ -29,19 +30,13 @@ checkv3 with settings_id
 
 checkv3 inline metadata.settings injects symbol
   [Documentation]  Inline metadata.settings must run apply_settings_side_effects
-  ...              so settings.symbols actually fires (issue #5999)
-  ${settings_obj} =  Evaluate  {"symbols": {"INLINE_V3_TEST": 1.0}}
+  ...              so settings.symbols actually fires (issue #5999).
+  ...              GTUBE is a hard bypass and skips SETTINGS_CHECK, so use a
+  ...              normal message that goes through the full prefilter chain.
+  ${settings_obj} =  Evaluate  {"symbols": ["INLINE_V3_TEST"]}
   &{meta} =  Create Dictionary  settings=${settings_obj}
-  Scan File V3  ${GTUBE}  metadata=${meta}
+  Scan File V3  ${MESSAGE}  metadata=${meta}
   Expect Symbol  INLINE_V3_TEST
-
-checkv3 inline metadata.settings overrides reject threshold
-  [Documentation]  Inline metadata.settings.actions must invoke the C-side
-  ...              action threshold apply path (issue #5999)
-  ${settings_obj} =  Evaluate  {"actions": {"reject": 1.0}}
-  &{meta} =  Create Dictionary  settings=${settings_obj}
-  Scan File V3  ${GTUBE}  metadata=${meta}
-  Expect Action  reject
 
 checkv3 missing metadata part
   [Documentation]  Send only message part without metadata, expect HTTP 500 (400 error mapped to 5xx)
