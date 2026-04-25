@@ -1423,38 +1423,43 @@ local function prepare_redis_call(script)
   for idx, s in ipairs(servers) do
     local server_addr = s:get_addr()
     if not server_addr then
-      -- Pending DNS resolution; mark as tempfail so the next attempt retries
+      -- Pending DNS resolution; mark as tempfail so the next attempt retries.
+      -- Insert a placeholder opt (server_idx-aligned) so options/servers_ready
+      -- indexing stays consistent for the consumer loop in load_script_task /
+      -- load_script_taskless. The placeholder is detected via .skip = true.
       script.servers_ready[idx] = "tempfail"
       logger.infox(rspamd_config,
           'skipping SCRIPT LOAD for upstream %s: address not resolved yet',
           s:get_name())
+      table.insert(options, { skip = true, upstream = s, server_idx = idx })
     else
-    local cur_opts = {
-      host = server_addr,
-      timeout = script.redis_params['timeout'],
-      cmd = 'SCRIPT',
-      args = { 'LOAD', script.script },
-      upstream = s
-    }
+      local cur_opts = {
+        host = server_addr,
+        timeout = script.redis_params['timeout'],
+        cmd = 'SCRIPT',
+        args = { 'LOAD', script.script },
+        upstream = s,
+        server_idx = idx,
+      }
 
-    -- By default we start from unsent status
-    if not script.servers_ready[idx] then
-      script.servers_ready[idx] = "unsent"
-    end
+      -- By default we start from unsent status
+      if not script.servers_ready[idx] then
+        script.servers_ready[idx] = "unsent"
+      end
 
-    if script.redis_params['username'] then
-      cur_opts['username'] = script.redis_params['username']
-    end
+      if script.redis_params['username'] then
+        cur_opts['username'] = script.redis_params['username']
+      end
 
-    if script.redis_params['password'] then
-      cur_opts['password'] = script.redis_params['password']
-    end
+      if script.redis_params['password'] then
+        cur_opts['password'] = script.redis_params['password']
+      end
 
-    if script.redis_params['db'] then
-      cur_opts['dbname'] = script.redis_params['db']
-    end
+      if script.redis_params['db'] then
+        cur_opts['dbname'] = script.redis_params['db']
+      end
 
-    table.insert(options, cur_opts)
+      table.insert(options, cur_opts)
     end
   end
 
@@ -1490,7 +1495,9 @@ local function load_script_task(script, task, is_write)
   local opts = prepare_redis_call(script)
 
   for idx, opt in ipairs(opts) do
-    if script.servers_ready[idx] ~= 'done' then
+    -- opt.skip means the upstream was not resolved when prepare_redis_call ran;
+    -- servers_ready is already tempfailed and will be retried on the next pass.
+    if not opt.skip and script.servers_ready[idx] ~= 'done' then
       opt.task = task
       opt.is_write = is_write
       opt.callback = function(err, data)
@@ -1553,7 +1560,7 @@ local function load_script_taskless(script, cfg, ev_base, is_write)
   local opts = prepare_redis_call(script)
 
   for idx, opt in ipairs(opts) do
-    if script.servers_ready[idx] ~= 'done' then
+    if not opt.skip and script.servers_ready[idx] ~= 'done' then
       opt.config = cfg
       opt.ev_base = ev_base
       opt.is_write = is_write
