@@ -1151,6 +1151,11 @@ local function migrate_handler(opts)
           for _, prefix in ipairs(prefixes) do
             stats.checked = stats.checked + 1
             local target_up = write_servers:get_upstream_by_hash(prefix)
+            if not target_up then
+              rspamd_logger.errx('no upstream available for prefix %s; aborting redistribute scan',
+                  prefix)
+              return false
+            end
             local target_name = target_up:get_name()
 
             if target_name == shard.name then

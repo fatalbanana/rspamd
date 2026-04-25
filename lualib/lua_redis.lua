@@ -270,6 +270,12 @@ local function redis_query_sentinel(ev_base, params, initialised)
   local sentinels = params.sentinels
   local addr = sentinels:get_upstream_round_robin()
 
+  if not addr then
+    logger.errx(rspamd_config,
+        'no sentinel upstream available (all dead or pending DNS resolution); skipping sentinel watch tick')
+    return
+  end
+
   local host = addr:get_addr()
   local masters = {}
   local process_masters -- Function that is called to process masters data
@@ -1200,7 +1206,9 @@ local function rspamd_redis_make_request(task, redis_params, key, is_write,
   end
 
   if not addr then
-    logger.errx(task, 'cannot select server to make redis request')
+    logger.errx(task,
+        'cannot select redis server (all dead or pending DNS resolution)')
+    return false, nil, nil
   end
 
   if redis_params['expand_keys'] then
@@ -1312,7 +1320,9 @@ local function redis_make_request_taskless(ev_base, cfg, redis_params, key,
   end
 
   if not addr then
-    logger.errx(cfg, 'cannot select server to make redis request')
+    logger.errx(cfg,
+        'cannot select redis server (all dead or pending DNS resolution)')
+    return false, nil, nil
   end
 
   local options = {
@@ -1816,7 +1826,9 @@ local function redis_connect_sync(redis_params, is_write, key, cfg, ev_base)
   end
 
   if not addr then
-    logger.errx(cfg, 'cannot select server to make redis request')
+    logger.errx(cfg or rspamd_config,
+        'cannot select redis server (all dead or pending DNS resolution)')
+    return false, nil
   end
 
   local options = {
@@ -1955,7 +1967,9 @@ exports.request = function(redis_params, attrs, req)
   end
 
   if not addr then
-    logger.errx(log_obj, 'cannot select server to make redis request')
+    logger.errx(log_obj,
+        'cannot select redis server (all dead or pending DNS resolution)')
+    return false, nil, nil
   end
 
   opts.host = addr:get_addr()
@@ -2077,7 +2091,9 @@ exports.connect = function(redis_params, attrs)
   end
 
   if not addr then
-    logger.errx(log_obj, 'cannot select server to make redis connect')
+    logger.errx(log_obj,
+        'cannot select redis server (all dead or pending DNS resolution)')
+    return false, nil, nil
   end
 
   opts.host = addr:get_addr()

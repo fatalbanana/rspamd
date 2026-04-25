@@ -349,6 +349,11 @@ local function elastic_send_data(flush_all, task, cfg, ev_base)
     es_index = settings['index_template']['name'] .. '-' .. os.date(settings['index_template']['pattern'])
 
     upstream = settings.upstream:get_upstream_round_robin()
+    if not upstream then
+      rspamd_logger.errx(log_object,
+          'no elastic upstream available (DNS pending or all dead); will retry next tick')
+      return
+    end
     host = upstream:get_name():gsub(":[1-9][0-9]*$", "")
     local ip_addr = upstream:get_addr():to_string(true)
     push_url = connect_prefix .. ip_addr .. '/' .. es_index .. '/_bulk'
@@ -717,6 +722,11 @@ end
 
 local function configure_geoip_pipeline(cfg, ev_base)
   local upstream = settings.upstream:get_upstream_round_robin()
+  if not upstream then
+    rspamd_logger.errx(rspamd_config,
+        'no elastic upstream available; cannot configure geoip pipeline')
+    return
+  end
   local host = upstream:get_name():gsub(":[1-9][0-9]*$", "")
   local ip_addr = upstream:get_addr():to_string(true)
   local geoip_url = connect_prefix .. ip_addr .. '/_ingest/pipeline/' .. settings['geoip']['pipeline_name']
@@ -912,6 +922,11 @@ end
 
 local function configure_index_policy(cfg, ev_base)
   local upstream = settings.upstream:get_upstream_round_robin()
+  if not upstream then
+    rspamd_logger.errx(rspamd_config,
+        'no elastic upstream available; cannot configure index policy')
+    return
+  end
   local host = upstream:get_name():gsub(":[1-9][0-9]*$", "")
   local ip_addr = upstream:get_addr():to_string(true)
   local index_policy_path = nil
@@ -1185,6 +1200,11 @@ end
 
 local function configure_index_template(cfg, ev_base)
   local upstream = settings.upstream:get_upstream_round_robin()
+  if not upstream then
+    rspamd_logger.errx(rspamd_config,
+        'no elastic upstream available; cannot configure index template')
+    return
+  end
   local host = upstream:get_name():gsub(":[1-9][0-9]*$", "")
   local ip_addr = upstream:get_addr():to_string(true)
   local template_url = connect_prefix .. ip_addr .. '/_index_template/' .. settings['index_template']['name']
@@ -1461,6 +1481,11 @@ local function configure_distro(cfg, ev_base)
   end
 
   local upstream = settings.upstream:get_upstream_round_robin()
+  if not upstream then
+    rspamd_logger.errx(rspamd_config,
+        'no elastic upstream available; will retry distro detection on next tick')
+    return
+  end
   local host = upstream:get_name():gsub(":[1-9][0-9]*$", "")
   local ip_addr = upstream:get_addr():to_string(true)
   local root_url = connect_prefix .. ip_addr .. '/'

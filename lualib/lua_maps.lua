@@ -167,6 +167,14 @@ local function query_external_map(map_config, upstreams, key, callback, task_or_
     log_obj = task_or_ctx.config
   end
 
+  if not upstream then
+    rspamd_logger.errx(log_obj,
+        'no upstream available for external map %s (all backends dead or pending DNS resolution)',
+        map_config.backend)
+    callback(false, 'no upstream available', 502, task_or_ctx)
+    return
+  end
+
   if type(key) == 'string' or type(key) == 'userdata' then
     if map_config.method == 'body' then
       http_body = key
