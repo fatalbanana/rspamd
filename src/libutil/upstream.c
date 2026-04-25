@@ -1406,8 +1406,8 @@ rspamd_upstream_dtor(struct upstream *up)
 rspamd_inet_addr_t *
 rspamd_upstream_addr_next(struct upstream *up)
 {
-	unsigned int idx = up->addrs.cur, next_idx = up->addrs.cur, cur_af,
-				 min_errors, min_errors_idx;
+	unsigned int idx, next_idx, cur_af,
+		min_errors, min_errors_idx;
 	struct upstream_addr_elt *e1, *e2;
 
 	/*
@@ -1418,6 +1418,14 @@ rspamd_upstream_addr_next(struct upstream *up)
 	 * 4) If we cannot find such element, then we return the next element (switching AF)
 	 */
 
+	if (up == NULL || up->addrs.addr == NULL ||
+		up->addrs.addr->len == 0) {
+		/* Pending DNS resolution or never had any addresses */
+		return NULL;
+	}
+
+	idx = up->addrs.cur;
+	next_idx = up->addrs.cur;
 	e1 = g_ptr_array_index(up->addrs.addr, up->addrs.cur);
 	cur_af = rspamd_inet_address_get_af(e1->addr);
 	min_errors = e1->errors;
@@ -1467,6 +1475,11 @@ rspamd_upstream_addr_cur(const struct upstream *up)
 {
 	struct upstream_addr_elt *elt;
 
+	if (up == NULL || up->addrs.addr == NULL ||
+		up->addrs.addr->len == 0) {
+		return NULL;
+	}
+
 	elt = g_ptr_array_index(up->addrs.addr, up->addrs.cur);
 
 	return elt->addr;
@@ -1481,6 +1494,12 @@ rspamd_upstream_name(struct upstream *up)
 int rspamd_upstream_port(struct upstream *up)
 {
 	struct upstream_addr_elt *elt;
+
+	if (up == NULL || up->addrs.addr == NULL ||
+		up->addrs.addr->len == 0) {
+		/* Pending or never resolved: fall back to the parsed port if known */
+		return up != NULL ? (int) up->deferred_port : -1;
+	}
 
 	elt = g_ptr_array_index(up->addrs.addr, up->addrs.cur);
 	return rspamd_inet_address_get_port(elt->addr);

@@ -113,7 +113,14 @@ lua_upstream_get_addr(lua_State *L)
 	struct rspamd_lua_upstream *up = lua_check_upstream(L, 1);
 
 	if (up) {
-		rspamd_lua_ip_push(L, rspamd_upstream_addr_next(up->up));
+		rspamd_inet_addr_t *addr = rspamd_upstream_addr_next(up->up);
+		if (addr) {
+			rspamd_lua_ip_push(L, addr);
+		}
+		else {
+			/* Upstream has no addresses yet (pending DNS resolution) */
+			lua_pushnil(L);
+		}
 	}
 	else {
 		lua_pushnil(L);

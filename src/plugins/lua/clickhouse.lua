@@ -1594,6 +1594,12 @@ local function check_rspamd_table(upstream, ev_base, cfg)
 end
 
 local function check_clickhouse_upstream(upstream, ev_base, cfg)
+  if not upstream:get_addr() then
+    rspamd_logger.infox(rspamd_config,
+        'skipping clickhouse upstream %s: address not resolved yet',
+        upstream:get_name())
+    return
+  end
   local ch_params = {
     ev_base = ev_base,
     config = cfg,

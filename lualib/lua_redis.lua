@@ -1421,8 +1421,16 @@ local function prepare_redis_call(script)
   end
 
   for idx, s in ipairs(servers) do
+    local server_addr = s:get_addr()
+    if not server_addr then
+      -- Pending DNS resolution; mark as tempfail so the next attempt retries
+      script.servers_ready[idx] = "tempfail"
+      logger.infox(rspamd_config,
+          'skipping SCRIPT LOAD for upstream %s: address not resolved yet',
+          s:get_name())
+    else
     local cur_opts = {
-      host = s:get_addr(),
+      host = server_addr,
       timeout = script.redis_params['timeout'],
       cmd = 'SCRIPT',
       args = { 'LOAD', script.script },
@@ -1447,6 +1455,7 @@ local function prepare_redis_call(script)
     end
 
     table.insert(options, cur_opts)
+    end
   end
 
   return options

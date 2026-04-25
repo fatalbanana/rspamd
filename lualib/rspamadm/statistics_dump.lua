@@ -260,8 +260,14 @@ end
 
 local function connect_to_upstream(up, redis_params)
   local rspamd_redis = require "rspamd_redis"
+  local up_addr = up:get_addr()
+  if not up_addr then
+    rspamd_logger.errx("cannot connect to redis %s: address not resolved yet",
+        up:get_name())
+    return false, nil
+  end
   local ret, conn = rspamd_redis.connect_sync({
-    host = up:get_addr(),
+    host = up_addr,
     timeout = redis_params.timeout,
     config = rspamd_config,
     ev_base = rspamadm_ev_base,
