@@ -391,6 +391,19 @@ local function rspamd_map_add_from_ucl(opt, mtype, description, callback)
       return maps_cache[cache_key]
     end
 
+    if not next(opt) then
+      -- Empty table: return a static empty map without involving C map infrastructure,
+      -- avoiding a spurious error log when an intentionally empty default is used.
+      rspamd_logger.warnx(rspamd_config, 'empty static map definition for: %s', description)
+      ret.get_key = function(_, _) return nil end
+      ret.foreach = function(_, _) return true end
+      ret.on_load = function(_, cb)
+        rspamd_config:add_on_load(function(_, _, _) cb() end)
+      end
+      maps_cache[cache_key] = ret
+      return ret
+    end
+
     if opt[1] then
       local function check_plain_map(line)
         return lua_util.str_startswith(line, 'http')
