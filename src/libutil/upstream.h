@@ -43,6 +43,13 @@ enum rspamd_upstream_flag {
 	RSPAMD_UPSTREAM_FLAG_NORESOLVE = (1 << 0),
 	RSPAMD_UPSTREAM_FLAG_SRV_RESOLVE = (1 << 1),
 	RSPAMD_UPSTREAM_FLAG_DNS = (1 << 2),
+	/*
+	 * Upstream was created with a hostname that could not be resolved at
+	 * config-parse time. It is kept out of the `alive` list until a later
+	 * lazy/forced resolution succeeds, at which point the flag is cleared
+	 * and the upstream becomes selectable.
+	 */
+	RSPAMD_UPSTREAM_FLAG_PENDING_RESOLVE = (1 << 3),
 };
 
 struct rspamd_config;

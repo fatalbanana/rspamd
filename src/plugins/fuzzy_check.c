@@ -7163,6 +7163,12 @@ fuzzy_lua_ping_storage(lua_State *L)
 	else {
 		struct upstream *selected = rspamd_upstream_get(rule_found->read_servers,
 														RSPAMD_UPSTREAM_ROUND_ROBIN, NULL, 0);
+		if (selected == NULL) {
+			lua_pushboolean(L, FALSE);
+			lua_pushfstring(L, "no fuzzy storage upstream available for rule %s",
+							rule_found->name);
+			return 2;
+		}
 		addr = rspamd_upstream_addr_next(selected);
 	}
 
