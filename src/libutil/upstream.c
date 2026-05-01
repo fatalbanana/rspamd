@@ -24,7 +24,6 @@
 #include "contrib/libev/ev.h"
 #include "logger.h"
 #include "contrib/librdns/rdns.h"
-#include "heap.h"
 
 #include <math.h>
 #include <netdb.h>
@@ -55,15 +54,6 @@ struct upstream_ring_point {
 	uint64_t hash;
 	struct upstream *up;
 };
-
-/* Heap element for token bucket selection */
-struct upstream_token_heap_entry {
-	unsigned int pri;    /* Priority = inflight_tokens (lower = better) */
-	unsigned int idx;    /* Heap index (managed by heap) */
-	struct upstream *up; /* Pointer to upstream */
-};
-
-RSPAMD_HEAP_DECLARE(upstream_token_heap, struct upstream_token_heap_entry);
 
 struct upstream {
 	unsigned int weight;
@@ -107,7 +97,6 @@ struct upstream {
 	gsize max_tokens;       /* Maximum token capacity */
 	gsize available_tokens; /* Current available tokens */
 	gsize inflight_tokens;  /* Tokens reserved by in-flight requests */
-	unsigned int heap_idx;  /* Index in token heap (UINT_MAX if not in heap) */
 #ifdef UPSTREAMS_THREAD_SAFE
 	rspamd_mutex_t *lock;
 #endif
@@ -148,10 +137,6 @@ struct upstream_list {
 	struct upstream_ring_point *ring;
 	unsigned int ring_len;
 	gboolean ring_dirty;
-
-	/* Token bucket heap for weighted selection */
-	upstream_token_heap_t token_heap;
-	gboolean token_bucket_initialized;
 #ifdef UPSTREAMS_THREAD_SAFE
 	rspamd_mutex_t *lock;
 #endif
@@ -433,27 +418,14 @@ rspamd_upstream_set_active(struct upstream_list *ls, struct upstream *upstream)
 		ls->ring_dirty = TRUE;
 
 		/* Initialize token bucket state */
-		upstream->heap_idx = UINT_MAX;
 		if (ls->rot_alg == RSPAMD_UPSTREAM_TOKEN_BUCKET) {
 			upstream->max_tokens = ls->limits->token_bucket_max;
 			upstream->available_tokens = upstream->max_tokens;
 			upstream->inflight_tokens = 0;
-
-			/* Add to token heap if already initialized */
-			if (ls->token_bucket_initialized) {
-				struct upstream_token_heap_entry entry;
-				entry.pri = 0;
-				entry.idx = 0;
-				entry.up = upstream;
-				rspamd_heap_push_safe(upstream_token_heap, &ls->token_heap, &entry, skip_heap);
-				upstream->heap_idx = rspamd_heap_size(upstream_token_heap, &ls->token_heap) - 1;
-			skip_heap:;
-			}
 		}
 	}
 	else {
 		upstream->active_idx = -1;
-		upstream->heap_idx = UINT_MAX;
 	}
 
 	if (upstream->ctx && upstream->ctx->configured &&
@@ -662,21 +634,10 @@ rspamd_upstream_promote_pending(struct upstream *upstream)
 	upstream->active_idx = ls->alive->len - 1;
 	ls->ring_dirty = TRUE;
 
-	upstream->heap_idx = UINT_MAX;
 	if (ls->rot_alg == RSPAMD_UPSTREAM_TOKEN_BUCKET) {
 		upstream->max_tokens = ls->limits->token_bucket_max;
 		upstream->available_tokens = upstream->max_tokens;
 		upstream->inflight_tokens = 0;
-
-		if (ls->token_bucket_initialized) {
-			struct upstream_token_heap_entry entry;
-			entry.pri = 0;
-			entry.idx = 0;
-			entry.up = upstream;
-			rspamd_heap_push_safe(upstream_token_heap, &ls->token_heap, &entry, skip_heap);
-			upstream->heap_idx = rspamd_heap_size(upstream_token_heap, &ls->token_heap) - 1;
-		skip_heap:;
-		}
 	}
 
 	msg_info_upstream("resolved deferred upstream %s; promoted to alive",
@@ -1087,33 +1048,19 @@ rspamd_upstream_set_inactive(struct upstream_list *ls, struct upstream *upstream
 	/* Invalidate ring hash */
 	ls->ring_dirty = TRUE;
 
-	/* Remove from token bucket heap if present */
-	if (ls->token_bucket_initialized && upstream->heap_idx != UINT_MAX) {
-		struct upstream_token_heap_entry *entry;
-
+	/*
+	 * Restore inflight tokens to available pool when transitioning to
+	 * inactive — those requests are abandoned, the tokens should be
+	 * available when the upstream comes back.
+	 */
+	if (ls->rot_alg == RSPAMD_UPSTREAM_TOKEN_BUCKET &&
+		upstream->inflight_tokens > 0) {
 		RSPAMD_UPSTREAM_LOCK(upstream);
-
-		if (upstream->heap_idx < rspamd_heap_size(upstream_token_heap, &ls->token_heap)) {
-			entry = rspamd_heap_index(upstream_token_heap, &ls->token_heap, upstream->heap_idx);
-			if (entry && entry->up == upstream) {
-				rspamd_heap_remove(upstream_token_heap, &ls->token_heap, entry);
-			}
+		upstream->available_tokens += upstream->inflight_tokens;
+		if (upstream->available_tokens > upstream->max_tokens) {
+			upstream->available_tokens = upstream->max_tokens;
 		}
-		upstream->heap_idx = UINT_MAX;
-
-		/*
-		 * Return inflight tokens to available pool - these represent
-		 * requests that were in-flight when upstream failed. The tokens
-		 * should be restored so they're available when upstream comes back.
-		 */
-		if (upstream->inflight_tokens > 0) {
-			upstream->available_tokens += upstream->inflight_tokens;
-			if (upstream->available_tokens > upstream->max_tokens) {
-				upstream->available_tokens = upstream->max_tokens;
-			}
-			upstream->inflight_tokens = 0;
-		}
-
+		upstream->inflight_tokens = 0;
 		RSPAMD_UPSTREAM_UNLOCK(upstream);
 	}
 
@@ -1958,12 +1905,6 @@ void rspamd_upstreams_destroy(struct upstream_list *ups)
 		ups->ring = NULL;
 		ups->ring_len = 0;
 
-		/* Clean up token bucket heap */
-		if (ups->token_bucket_initialized) {
-			rspamd_heap_destroy(upstream_token_heap, &ups->token_heap);
-			ups->token_bucket_initialized = FALSE;
-		}
-
 		g_ptr_array_free(ups->alive, TRUE);
 
 		for (i = 0; i < ups->ups->len; i++) {
@@ -2619,114 +2560,18 @@ rspamd_upstream_calculate_tokens(const struct upstream_limits *limits,
 }
 
 /*
- * Initialize token bucket heap for an upstream list (lazy initialization)
+ * Lazy per-upstream token bucket initialization. Called from selection paths
+ * to ensure max_tokens is set for upstreams that joined before the rotation
+ * algorithm was switched to TOKEN_BUCKET.
  */
-static gboolean
-rspamd_upstream_token_bucket_init(struct upstream_list *ups)
+static inline void
+rspamd_upstream_ensure_tokens(struct upstream_list *ups, struct upstream *up)
 {
-	unsigned int i;
-	struct upstream *up;
-	struct upstream_token_heap_entry entry;
-
-	if (ups->token_bucket_initialized) {
-		return TRUE;
-	}
-
-	rspamd_heap_init(upstream_token_heap, &ups->token_heap);
-
-	/* Add all alive upstreams to the heap */
-	for (i = 0; i < ups->alive->len; i++) {
-		up = g_ptr_array_index(ups->alive, i);
-
-		/* Initialize token bucket state for this upstream */
+	if (up->max_tokens == 0) {
 		up->max_tokens = ups->limits->token_bucket_max;
 		up->available_tokens = up->max_tokens;
 		up->inflight_tokens = 0;
-
-		/* Add to heap with priority = inflight_tokens (0 initially) */
-		entry.pri = 0;
-		entry.idx = 0;
-		entry.up = up;
-
-		rspamd_heap_push_safe(upstream_token_heap, &ups->token_heap, &entry, init_error);
-		up->heap_idx = rspamd_heap_size(upstream_token_heap, &ups->token_heap) - 1;
 	}
-
-	ups->token_bucket_initialized = TRUE;
-	return TRUE;
-
-init_error:
-	/* Heap allocation failed, destroy what we have */
-	rspamd_heap_destroy(upstream_token_heap, &ups->token_heap);
-	return FALSE;
-}
-
-/*
- * Find upstream in heap by pointer (for removal or update after finding mismatch).
- * Also refreshes up->heap_idx as a side effect.
- */
-static struct upstream_token_heap_entry *
-rspamd_upstream_find_in_heap(struct upstream_list *ups, struct upstream *up)
-{
-	unsigned int i;
-	struct upstream_token_heap_entry *entry;
-
-	for (i = 0; i < rspamd_heap_size(upstream_token_heap, &ups->token_heap); i++) {
-		entry = rspamd_heap_index(upstream_token_heap, &ups->token_heap, i);
-		if (entry && entry->up == up) {
-			up->heap_idx = i;
-			return entry;
-		}
-	}
-	return NULL;
-}
-
-/*
- * Update heap position after changing inflight_tokens.
- *
- * The intrusive heap stores elements by value and swaps entire structs during
- * swim/sink operations. This means up->heap_idx can become stale after any
- * heap modification (the entry at that index may now belong to a different
- * upstream). We handle this by:
- * 1. Trying the cached heap_idx first (fast path)
- * 2. Falling back to linear search if the cache is stale
- * 3. Refreshing heap_idx after the update via linear search
- *
- * Linear search is acceptable since upstream count is typically small (2-10).
- */
-static void
-rspamd_upstream_token_heap_update(struct upstream_list *ups, struct upstream *up)
-{
-	struct upstream_token_heap_entry *entry = NULL;
-
-	if (!ups->token_bucket_initialized || up->heap_idx == UINT_MAX) {
-		return;
-	}
-
-	/* Try cached index first (fast path) */
-	if (up->heap_idx < rspamd_heap_size(upstream_token_heap, &ups->token_heap)) {
-		struct upstream_token_heap_entry *candidate =
-			rspamd_heap_index(upstream_token_heap, &ups->token_heap, up->heap_idx);
-		if (candidate && candidate->up == up) {
-			entry = candidate;
-		}
-	}
-
-	/* Cache miss: linear search */
-	if (!entry) {
-		entry = rspamd_upstream_find_in_heap(ups, up);
-		if (!entry) {
-			return;
-		}
-	}
-
-	unsigned int new_pri = (unsigned int) MIN(up->inflight_tokens, UINT_MAX);
-	rspamd_heap_update(upstream_token_heap, &ups->token_heap, entry, new_pri);
-
-	/* Refresh heap_idx: heap_update swaps whole structs during swim/sink,
-	 * so the entry pointer now points to whatever element ended up at that
-	 * array slot - not necessarily our upstream. */
-	rspamd_upstream_find_in_heap(ups, up);
 }
 
 struct upstream *
@@ -2736,11 +2581,11 @@ rspamd_upstream_get_token_bucket(struct upstream_list *ups,
 								 gsize *reserved_tokens)
 {
 	struct upstream *selected = NULL;
-	struct upstream_token_heap_entry *entry;
+	struct upstream *fallback = NULL;
+	gsize best_eligible_inflight = G_MAXSIZE;
+	gsize least_loaded_inflight = G_MAXSIZE;
 	gsize token_cost;
 	unsigned int i;
-	gsize min_inflight = G_MAXSIZE;
-	struct upstream *fallback = NULL;
 
 	if (ups == NULL || reserved_tokens == NULL) {
 		return NULL;
@@ -2756,80 +2601,50 @@ rspamd_upstream_get_token_bucket(struct upstream_list *ups,
 		return NULL;
 	}
 
-	/* Initialize token bucket if not done yet */
-	if (!ups->token_bucket_initialized) {
-		if (!rspamd_upstream_token_bucket_init(ups)) {
-			/* Fall back to round robin on init failure */
-			RSPAMD_UPSTREAM_UNLOCK(ups);
-			return rspamd_upstream_get_round_robin(ups, except, TRUE);
-		}
-	}
-
-	/* Calculate token cost for this message */
 	token_cost = rspamd_upstream_calculate_tokens(ups->limits, message_size);
 
 	/*
-	 * Use heap property: the root (index 0) has minimum inflight_tokens.
-	 * Check a few candidates from the top of the heap rather than scanning all.
+	 * Linear scan over alive[]: prefer the lowest-inflight upstream that has
+	 * sufficient available tokens. If no upstream is eligible, fall back to
+	 * the least-loaded one (whose available_tokens we will clamp to 0).
+	 *
+	 * Alive sets are typically small (2-10); a flat scan is faster than a
+	 * heap once you account for the by-value heap macros' O(n) repair cost.
 	 */
-	unsigned int heap_size = rspamd_heap_size(upstream_token_heap, &ups->token_heap);
-	unsigned int candidates_checked = 0;
-	const unsigned int max_candidates = 8; /* Check up to 8 lowest-loaded upstreams */
+	for (i = 0; i < ups->alive->len; i++) {
+		struct upstream *up = g_ptr_array_index(ups->alive, i);
 
-	for (i = 0; i < heap_size && candidates_checked < max_candidates; i++) {
-		entry = rspamd_heap_index(upstream_token_heap, &ups->token_heap, i);
-
-		if (entry == NULL || entry->up == NULL) {
+		if (except != NULL && up == except) {
 			continue;
 		}
 
-		struct upstream *up = entry->up;
+		rspamd_upstream_ensure_tokens(ups, up);
 
-		/* Skip inactive upstreams */
-		if (up->active_idx < 0) {
-			continue;
-		}
-
-		/* Skip excluded upstream */
-		if (except && up == except) {
-			continue;
-		}
-
-		candidates_checked++;
-
-		/* Track upstream with minimum inflight for fallback */
-		if (up->inflight_tokens < min_inflight) {
-			min_inflight = up->inflight_tokens;
+		if (up->inflight_tokens < least_loaded_inflight) {
+			least_loaded_inflight = up->inflight_tokens;
 			fallback = up;
 		}
 
-		/* Check if upstream has sufficient tokens */
-		if (up->available_tokens >= token_cost) {
+		if (up->available_tokens >= token_cost &&
+			up->inflight_tokens < best_eligible_inflight) {
+			best_eligible_inflight = up->inflight_tokens;
 			selected = up;
-			break;
 		}
 	}
 
-	/* If no upstream has sufficient tokens, use the least loaded one */
-	if (selected == NULL && fallback != NULL) {
+	if (selected == NULL) {
 		selected = fallback;
 	}
 
 	if (selected != NULL) {
-		/* Reserve tokens */
 		if (selected->available_tokens >= token_cost) {
 			selected->available_tokens -= token_cost;
 		}
 		else {
-			/* Clamp to 0 if we don't have enough */
 			selected->available_tokens = 0;
 		}
 		selected->inflight_tokens += token_cost;
 		*reserved_tokens = token_cost;
-
-		/* Update heap position */
-		rspamd_upstream_token_heap_update(ups, selected);
-
 		selected->checked++;
 	}
 
@@ -2848,10 +2663,6 @@ void rspamd_upstream_return_tokens(struct upstream *up, gsize tokens, gboolean s
 
 	ls = up->ls;
 
-	/*
-	 * Lock ordering: always lock list before upstream to prevent deadlocks.
-	 * This is consistent with rspamd_upstream_get_token_bucket.
-	 */
 	if (ls) {
 		RSPAMD_UPSTREAM_LOCK(ls);
 	}
@@ -2874,11 +2685,6 @@ void rspamd_upstream_return_tokens(struct upstream *up, gsize tokens, gboolean s
 		if (up->available_tokens > up->max_tokens) {
 			up->available_tokens = up->max_tokens;
 		}
-	}
-
-	/* Update heap position if we have a list */
-	if (ls && ls->token_bucket_initialized) {
-		rspamd_upstream_token_heap_update(ls, up);
 	}
 
 	RSPAMD_UPSTREAM_UNLOCK(up);
