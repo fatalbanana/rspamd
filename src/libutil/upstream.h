@@ -386,6 +386,31 @@ void rspamd_upstreams_set_slow_start(struct upstream_list *ups,
 									 unsigned int slow_start_ms);
 
 /**
+ * Record a per-request latency observation for the upstream.
+ * Updates a time-weighted EWMA that decays old samples on a
+ * configurable half-life. The EWMA feeds into P2C selection so
+ * faster backends are preferred when load is otherwise comparable.
+ * Cheap to call; no allocation.
+ * @param up upstream
+ * @param seconds observed latency (e.g. request RTT)
+ */
+void rspamd_upstream_record_latency(struct upstream *up, double seconds);
+
+/**
+ * Read the current latency EWMA in seconds. Zero if no samples yet.
+ */
+double rspamd_upstream_get_latency(const struct upstream *up);
+
+/**
+ * Configure latency EWMA half-life. Defaults to 60s; setting to 0
+ * disables time-weighting (becomes a flat moving average).
+ * @param ups upstream list
+ * @param half_life_s decay half-life in seconds
+ */
+void rspamd_upstreams_set_latency_half_life(struct upstream_list *ups,
+											double half_life_s);
+
+/**
  * Get upstream using token bucket algorithm.
  * Selects upstream with lowest inflight tokens (weighted by message size).
  * Falls back to round-robin if heap initialization fails.

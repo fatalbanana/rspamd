@@ -84,6 +84,15 @@ struct upstream {
 	 * up linearly from 0 to 1.
 	 */
 	double revived_at;
+
+	/*
+	 * Latency EWMA in seconds. Zero when no samples have been recorded.
+	 * Updated by rspamd_upstream_record_latency with time-weighted decay
+	 * controlled by upstream_limits.latency_half_life_s.
+	 */
+	double latency_ewma;
+	double latency_last_at;
+	unsigned int latency_n;
 	gpointer ud;
 	enum rspamd_upstream_flag flags;
 	struct upstream_list *ls;
@@ -142,6 +151,13 @@ struct upstream_limits {
 	 * lands on the just-revived backend. Default 0 (disabled).
 	 */
 	unsigned int slow_start_ms;
+
+	/*
+	 * Latency EWMA half-life in seconds. Larger = slower to react, smaller
+	 * = noisier. Default 60.0. Set to 0 to weight every sample equally
+	 * (degrades to a 1/n moving average regardless of inter-arrival time).
+	 */
+	double latency_half_life_s;
 };
 
 struct upstream_list {
@@ -231,6 +247,8 @@ static const double default_probe_jitter = DEFAULT_PROBE_JITTER;
 #define DEFAULT_TOKEN_BUCKET_BASE_COST 10
 /* Default refill rate: full bucket regenerates in 60s of wall time. */
 #define DEFAULT_TOKEN_BUCKET_REFILL_PER_S (DEFAULT_TOKEN_BUCKET_MAX / 60)
+/* EWMA half-life: stale samples lose half their weight every 60s. */
+#define DEFAULT_LATENCY_HALF_LIFE_S 60.0
 
 /*
  * Initial delay before retrying DNS for a PENDING_RESOLVE upstream, and the
@@ -255,6 +273,7 @@ static const struct upstream_limits default_limits = {
 	.token_bucket_min = DEFAULT_TOKEN_BUCKET_MIN,
 	.token_bucket_base_cost = DEFAULT_TOKEN_BUCKET_BASE_COST,
 	.token_bucket_refill_per_s = DEFAULT_TOKEN_BUCKET_REFILL_PER_S,
+	.latency_half_life_s = DEFAULT_LATENCY_HALF_LIFE_S,
 };
 
 static void rspamd_upstream_lazy_resolve_cb(struct ev_loop *, ev_timer *, int);
@@ -2066,20 +2085,39 @@ rspamd_upstream_slow_start_factor(struct upstream *up, double now)
 
 /*
  * Load score used by P2C: combines passive in-flight count with a small
- * penalty for recent errors. Lower is better. The errors term keeps
- * P2C biased away from a flapping upstream that hasn't yet accumulated
- * enough failures to be marked dead.
+ * penalty for recent errors and (when available) latency EWMA. Lower is
+ * better.
  *
- * During slow start, scale the score *up* by the inverse factor so that
- * a barely-warmed-up upstream looks loaded relative to its peers and
+ * Phase 2 score, when latency samples exist:
+ *   score = latency * (inflight + 1) + errors_penalty
+ *
+ * This is a lightweight approximation of PeakEWMA used by Linkerd/Finagle:
+ * a slow backend with low load still loses to a fast one with comparable
+ * load; a fast backend with high load can still lose to an idle slow one
+ * if the latency gap is small enough.
+ *
+ * Phase 1 fallback (no latency yet):
+ *   score = inflight + errors * 2
+ *
+ * During slow start the score is scaled *up* by the inverse factor so a
+ * barely-warmed-up upstream looks loaded relative to its peers and
  * receives proportionally less traffic.
  */
 static inline double
 rspamd_upstream_load_score(struct upstream *up, double now)
 {
-	double base = (double) up->inflight + (double) up->errors * 2.0;
-	double factor = rspamd_upstream_slow_start_factor(up, now);
+	double base;
+	double factor;
 
+	if (up->latency_n > 0 && up->latency_ewma > 0) {
+		base = up->latency_ewma * (double) (up->inflight + 1) +
+			   (double) up->errors * 5.0 * up->latency_ewma;
+	}
+	else {
+		base = (double) up->inflight + (double) up->errors * 2.0;
+	}
+
+	factor = rspamd_upstream_slow_start_factor(up, now);
 	if (factor < 1.0) {
 		/* As factor -> 0, score -> infinity (heavily deprioritised). */
 		if (factor < 0.01) {
@@ -2731,6 +2769,92 @@ void rspamd_upstreams_set_slow_start(struct upstream_list *ups,
 	memcpy(nlimits, ups->limits, sizeof(*nlimits));
 	nlimits->slow_start_ms = slow_start_ms;
 	ups->limits = nlimits;
+}
+
+void rspamd_upstreams_set_latency_half_life(struct upstream_list *ups,
+											double half_life_s)
+{
+	struct upstream_limits *nlimits;
+	g_assert(ups != NULL);
+	g_assert(ups->ctx != NULL && ups->ctx->pool != NULL);
+
+	if (half_life_s < 0) {
+		half_life_s = 0;
+	}
+	nlimits = rspamd_mempool_alloc(ups->ctx->pool, sizeof(*nlimits));
+	memcpy(nlimits, ups->limits, sizeof(*nlimits));
+	nlimits->latency_half_life_s = half_life_s;
+	ups->limits = nlimits;
+}
+
+/*
+ * Time-weighted EWMA for latency. Older samples decay so that a
+ * once-slow-but-recovered upstream isn't forever penalised.
+ *
+ * Mathematically: alpha = 1 - exp(-dt / tau), where tau is set so the
+ * weight halves over `latency_half_life_s` of wall time. tau = hl/ln(2).
+ *
+ * If half_life is 0 we degrade to a flat moving average where every
+ * sample has equal weight regardless of arrival time.
+ */
+void rspamd_upstream_record_latency(struct upstream *up, double seconds)
+{
+	double now;
+	double dt;
+	double tau;
+	double alpha;
+	double half_life;
+
+	if (up == NULL || seconds < 0) {
+		return;
+	}
+
+	RSPAMD_UPSTREAM_LOCK(up);
+
+	if (up->ctx && up->ctx->event_loop) {
+		now = ev_now(up->ctx->event_loop);
+	}
+	else {
+		now = rspamd_get_ticks(FALSE);
+	}
+
+	if (up->latency_n == 0 || up->latency_last_at <= 0) {
+		up->latency_ewma = seconds;
+	}
+	else {
+		half_life = up->ls ? up->ls->limits->latency_half_life_s : DEFAULT_LATENCY_HALF_LIFE_S;
+		if (half_life <= 0) {
+			/* Flat moving average. */
+			alpha = 1.0 / (double) (up->latency_n + 1);
+		}
+		else {
+			dt = now - up->latency_last_at;
+			if (dt < 0.0) {
+				dt = 0.0;
+			}
+			tau = half_life / 0.6931471805599453; /* ln(2) */
+			alpha = 1.0 - exp(-dt / tau);
+			/* Cap so we never wholly forget the prior estimate. */
+			if (alpha > 0.5) alpha = 0.5;
+			if (alpha < 0.01) alpha = 0.01;
+		}
+		up->latency_ewma = alpha * seconds + (1.0 - alpha) * up->latency_ewma;
+	}
+
+	up->latency_last_at = now;
+	if (up->latency_n < UINT_MAX) {
+		up->latency_n++;
+	}
+
+	RSPAMD_UPSTREAM_UNLOCK(up);
+}
+
+double rspamd_upstream_get_latency(const struct upstream *up)
+{
+	if (up == NULL) {
+		return 0.0;
+	}
+	return up->latency_ewma;
 }
 
 /*
