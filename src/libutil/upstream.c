@@ -2525,20 +2525,18 @@ void rspamd_upstreams_set_token_bucket(struct upstream_list *ups,
 {
 	struct upstream_limits *nlimits;
 	g_assert(ups != NULL);
+	g_assert(ups->ctx != NULL && ups->ctx->pool != NULL);
 
-	/* Allocate new limits if we have a pool, otherwise modify in place */
-	if (ups->ctx && ups->ctx->pool) {
-		nlimits = rspamd_mempool_alloc(ups->ctx->pool, sizeof(*nlimits));
-		memcpy(nlimits, ups->limits, sizeof(*nlimits));
-	}
-	else {
-		/* No pool, we need to be careful here */
-		nlimits = g_malloc(sizeof(*nlimits));
-		memcpy(nlimits, ups->limits, sizeof(*nlimits));
-	}
+	nlimits = rspamd_mempool_alloc(ups->ctx->pool, sizeof(*nlimits));
+	memcpy(nlimits, ups->limits, sizeof(*nlimits));
 
 	if (max_tokens > 0) {
 		nlimits->token_bucket_max = max_tokens;
+		/* Keep refill rate proportional: full bucket regenerates in 60s. */
+		nlimits->token_bucket_refill_per_s = max_tokens / 60;
+		if (nlimits->token_bucket_refill_per_s == 0) {
+			nlimits->token_bucket_refill_per_s = 1;
+		}
 	}
 	if (scale_factor > 0) {
 		nlimits->token_bucket_scale = scale_factor;
