@@ -460,6 +460,13 @@ rspamd_upstream_set_active(struct upstream_list *ls, struct upstream *upstream)
 		!((upstream->flags & RSPAMD_UPSTREAM_FLAG_NORESOLVE) ||
 		  (upstream->flags & RSPAMD_UPSTREAM_FLAG_DNS))) {
 
+		/*
+		 * Snapshot any backoff state already accumulated by lazy_resolve_cb
+		 * before we stop the timer, so we can preserve it for pending
+		 * upstreams that aren't yet resolved.
+		 */
+		double prev_repeat = ev_can_stop(&upstream->ev) ? upstream->ev.repeat : 0.0;
+
 		if (ev_can_stop(&upstream->ev)) {
 			ev_timer_stop(upstream->ctx->event_loop, &upstream->ev);
 		}
@@ -472,9 +479,18 @@ rspamd_upstream_set_active(struct upstream_list *ls, struct upstream *upstream)
 			when = 0.0;
 		}
 		else if (is_pending) {
-			/* Retry quickly while we have no addresses */
-			when = rspamd_time_jitter(UPSTREAM_PENDING_RESOLVE_INITIAL_DELAY,
-									  UPSTREAM_PENDING_RESOLVE_INITIAL_DELAY * .25);
+			/*
+			 * Keep the backoff already grown by repeated lazy_resolve_cb
+			 * runs; falling back to the initial delay would mask repeated
+			 * DNS failure with optimistic 1s retries.
+			 */
+			if (prev_repeat >= UPSTREAM_PENDING_RESOLVE_INITIAL_DELAY) {
+				when = prev_repeat;
+			}
+			else {
+				when = rspamd_time_jitter(UPSTREAM_PENDING_RESOLVE_INITIAL_DELAY,
+										  UPSTREAM_PENDING_RESOLVE_INITIAL_DELAY * .25);
+			}
 		}
 		else {
 			when = rspamd_time_jitter(upstream->ls->limits->lazy_resolve_time,
