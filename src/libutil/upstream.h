@@ -375,6 +375,17 @@ void rspamd_upstreams_set_token_bucket(struct upstream_list *ups,
 									   gsize base_cost);
 
 /**
+ * Configure slow-start window for revived upstreams.
+ * When set, a freshly revived upstream's effective weight ramps linearly
+ * from 0 to its configured weight over the given window. Avoids the
+ * thundering herd that would otherwise hit the just-revived backend.
+ * @param ups upstream list
+ * @param slow_start_ms ramp duration in milliseconds (0 = disabled)
+ */
+void rspamd_upstreams_set_slow_start(struct upstream_list *ups,
+									 unsigned int slow_start_ms);
+
+/**
  * Get upstream using token bucket algorithm.
  * Selects upstream with lowest inflight tokens (weighted by message size).
  * Falls back to round-robin if heap initialization fails.
