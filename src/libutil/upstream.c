@@ -2008,13 +2008,23 @@ static struct upstream *
 rspamd_upstream_get_random(struct upstream_list *ups,
 						   struct upstream *except)
 {
-	for (;;) {
-		unsigned int idx = ottery_rand_range(ups->alive->len - 1);
-		struct upstream *up;
+	unsigned int n = ups->alive->len;
+	struct upstream *up;
 
+	if (n == 0) {
+		return NULL;
+	}
+	if (n == 1) {
+		up = g_ptr_array_index(ups->alive, 0);
+		return (except != NULL && up == except) ? NULL : up;
+	}
+
+	/* n >= 2: at most one excluded, retry-on-collision is bounded */
+	for (;;) {
+		unsigned int idx = ottery_rand_range(n - 1);
 		up = g_ptr_array_index(ups->alive, idx);
 
-		if (except && up == except) {
+		if (except != NULL && up == except) {
 			continue;
 		}
 
