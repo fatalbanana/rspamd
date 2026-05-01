@@ -61,6 +61,12 @@ struct upstream {
 	unsigned int errors;
 	unsigned int checked;
 	unsigned int dns_requests;
+	/*
+	 * Passive in-flight counter: incremented on every selection via
+	 * rspamd_upstream_get_common, decremented in rspamd_upstream_ok /
+	 * rspamd_upstream_fail. Used by P2C as the load comparator.
+	 */
+	unsigned int inflight;
 	int active_idx;
 	unsigned int ttl;
 	char *name;
@@ -1134,6 +1140,11 @@ void rspamd_upstream_fail(struct upstream *upstream,
 					   upstream->name,
 					   reason);
 
+	/* Pair with the increment in rspamd_upstream_get_common. */
+	if (upstream->inflight > 0) {
+		upstream->inflight--;
+	}
+
 	if (upstream->ctx && upstream->active_idx != -1 && upstream->ls) {
 		sec_cur = rspamd_get_ticks(FALSE);
 
@@ -1257,6 +1268,10 @@ void rspamd_upstream_ok(struct upstream *upstream)
 	struct upstream_list_watcher *w;
 
 	RSPAMD_UPSTREAM_LOCK(upstream);
+	/* Pair with the increment in rspamd_upstream_get_common. */
+	if (upstream->inflight > 0) {
+		upstream->inflight--;
+	}
 	/* Success handling */
 	if (upstream->half_open_inflight > 0) {
 		/* Successful probe: mark alive and reset backoff */
@@ -1994,6 +2009,64 @@ rspamd_upstream_get_random(struct upstream_list *ups,
 	}
 }
 
+/*
+ * Load score used by P2C: combines passive in-flight count with a small
+ * penalty for recent errors. Lower is better. The errors term keeps
+ * P2C biased away from a flapping upstream that hasn't yet accumulated
+ * enough failures to be marked dead.
+ */
+static inline unsigned int
+rspamd_upstream_load_score(const struct upstream *up)
+{
+	return up->inflight + up->errors * 2;
+}
+
+/*
+ * Power of Two Choices: pick two distinct alive upstreams uniformly at
+ * random and return the one with the lower load score. Provably within a
+ * constant factor of optimal max-load and the modern default for
+ * load-aware random selection.
+ */
+static struct upstream *
+rspamd_upstream_get_p2c(struct upstream_list *ups, struct upstream *except)
+{
+	unsigned int n = ups->alive->len;
+	struct upstream *a, *b;
+
+	if (n == 0) {
+		return NULL;
+	}
+	if (n == 1) {
+		a = g_ptr_array_index(ups->alive, 0);
+		return (except != NULL && a == except) ? NULL : a;
+	}
+	if (n == 2 && except != NULL) {
+		/* If one of the two is excluded, the choice is forced. */
+		a = g_ptr_array_index(ups->alive, 0);
+		b = g_ptr_array_index(ups->alive, 1);
+		if (a == except) return b;
+		if (b == except) return a;
+		/* Neither excluded: fall through to standard P2C. */
+	}
+
+	/* Sample two distinct indices. */
+	unsigned int i = ottery_rand_range(n - 1);
+	unsigned int j;
+	do {
+		j = ottery_rand_range(n - 1);
+	} while (j == i);
+
+	a = g_ptr_array_index(ups->alive, i);
+	b = g_ptr_array_index(ups->alive, j);
+
+	if (except != NULL) {
+		if (a == except) return b;
+		if (b == except) return a;
+	}
+
+	return rspamd_upstream_load_score(a) <= rspamd_upstream_load_score(b) ? a : b;
+}
+
 static struct upstream *
 rspamd_upstream_get_round_robin(struct upstream_list *ups,
 								struct upstream *except,
@@ -2321,7 +2394,8 @@ rspamd_upstream_get_common(struct upstream_list *ups,
 	RSPAMD_UPSTREAM_UNLOCK(ups);
 
 	if (ups->alive->len == 1 && default_type != RSPAMD_UPSTREAM_SEQUENTIAL) {
-		/* Fast path */
+		/* Fast path: single alive upstream is returned even when it equals
+		 * `except` (documented last-resort behaviour to avoid NULL return). */
 		up = g_ptr_array_index(ups->alive, 0);
 		goto end;
 	}
@@ -2341,7 +2415,14 @@ rspamd_upstream_get_common(struct upstream_list *ups,
 	switch (type) {
 	default:
 	case RSPAMD_UPSTREAM_RANDOM:
-		up = rspamd_upstream_get_random(ups, except);
+		/*
+		 * Silent upgrade: P2C strictly dominates uniform random. Existing
+		 * RANDOM callers get load-aware selection at no cost.
+		 */
+		up = rspamd_upstream_get_p2c(ups, except);
+		break;
+	case RSPAMD_UPSTREAM_P2C:
+		up = rspamd_upstream_get_p2c(ups, except);
 		break;
 	case RSPAMD_UPSTREAM_HASHED:
 		up = rspamd_upstream_get_hashed(ups, except, key, keylen);
@@ -2355,10 +2436,10 @@ rspamd_upstream_get_common(struct upstream_list *ups,
 	case RSPAMD_UPSTREAM_TOKEN_BUCKET:
 		/*
 		 * Token bucket requires message size, which isn't available here.
-		 * Fall back to round robin. Use rspamd_upstream_get_token_bucket()
-		 * for proper token bucket selection.
+		 * Fall back to P2C. Use rspamd_upstream_get_token_bucket() for
+		 * proper token bucket selection.
 		 */
-		up = rspamd_upstream_get_round_robin(ups, except, TRUE);
+		up = rspamd_upstream_get_p2c(ups, except);
 		break;
 	case RSPAMD_UPSTREAM_SEQUENTIAL:
 		if (ups->cur_elt >= ups->alive->len) {
@@ -2373,6 +2454,7 @@ rspamd_upstream_get_common(struct upstream_list *ups,
 end:
 	if (up) {
 		up->checked++;
+		up->inflight++;
 	}
 
 	return up;
@@ -2716,6 +2798,7 @@ rspamd_upstream_get_token_bucket(struct upstream_list *ups,
 		selected->inflight_tokens += token_cost;
 		*reserved_tokens = token_cost;
 		selected->checked++;
+		selected->inflight++; /* paired with ok()/fail() decrement */
 	}
 
 	RSPAMD_UPSTREAM_UNLOCK(ups);

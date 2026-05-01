@@ -36,6 +36,13 @@ enum rspamd_upstream_rotation {
 	RSPAMD_UPSTREAM_MASTER_SLAVE,
 	RSPAMD_UPSTREAM_SEQUENTIAL,
 	RSPAMD_UPSTREAM_TOKEN_BUCKET, /* Token bucket weighted balancing */
+	/*
+	 * Power of Two Choices: pick two alive upstreams at random, choose the
+	 * one with lower load (inflight + recent errors). Provably within a
+	 * constant factor of optimal max-load. RANDOM callers are silently
+	 * upgraded to P2C since it strictly dominates uniform random.
+	 */
+	RSPAMD_UPSTREAM_P2C,
 	RSPAMD_UPSTREAM_UNDEF
 };
 
