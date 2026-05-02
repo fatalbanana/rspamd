@@ -24,6 +24,7 @@
 #include "utlist.h"
 #include "khash.h"
 #include "composites/composites.h"
+#include "memory_stat.h"
 
 #ifdef HAVE_SYS_RESOURCE_H
 #include <sys/resource.h>
@@ -822,6 +823,17 @@ rspamd_control_default_cmd_handler(int fd,
 	rspamd_main = cd->worker->srv;
 
 	switch (cmd->type) {
+	case RSPAMD_CONTROL_MEMORY_STAT:
+		/*
+		 * Memory stat needs to attach a file descriptor with the full UCL
+		 * dump, so it has its own send path and bypasses the trailing
+		 * write() below.
+		 */
+		rspamd_memory_stat_collect_and_send(rspamd_main, cd->worker, fd, cmd);
+		if (attached_fd != -1) {
+			close(attached_fd);
+		}
+		return;
 	case RSPAMD_CONTROL_STAT:
 		if (getrusage(RUSAGE_SELF, &rusg) == -1) {
 			msg_err_main("cannot get rusage stats: %s",
