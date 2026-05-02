@@ -1329,11 +1329,28 @@ rspamd_http_connection_new_client(struct rspamd_http_context *ctx,
 				return NULL;
 			}
 
+			/* The selected proxy upstream is handed off to new_common but
+			 * never tracked through the request lifecycle here; retire the
+			 * inflight counter at connect-success time so P2C scoring stays
+			 * accurate. Wiring per-request success/failure is left for a
+			 * follow-up. */
+			rspamd_upstream_release(up);
+
 			return rspamd_http_connection_new_common(ctx, fd, body_handler,
 													 error_handler, finish_handler, opts,
 													 RSPAMD_HTTP_CLIENT,
 													 RSPAMD_HTTP_CONN_OWN_SOCKET | RSPAMD_HTTP_CONN_FLAG_PROXY,
 													 up);
+		}
+		else {
+			/*
+			 * Proxies are configured but none usable right now (all dead or
+			 * pending DNS resolution). Surface this so the admin knows
+			 * traffic is going direct instead of silently bypassing the
+			 * configured proxy chain.
+			 */
+			msg_info("no http proxy upstream available "
+					 "(all dead or pending DNS); falling back to direct connect");
 		}
 	}
 

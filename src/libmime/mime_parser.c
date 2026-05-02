@@ -887,7 +887,9 @@ rspamd_mime_parse_normal_part(struct rspamd_task *task,
 
 						ct_nid = OBJ_obj2nid(p7_signed_content->type);
 
-						if (ct_nid == NID_pkcs7_data && p7_signed_content->d.data) {
+						if (ct_nid == NID_pkcs7_data && p7_signed_content->d.data &&
+							p7_signed_content->d.data->length > 0 &&
+							p7_signed_content->d.data->data) {
 							int ret;
 
 							msg_debug_mime("found an additional part inside of "
@@ -1086,6 +1088,9 @@ rspamd_mime_process_multipart_node(struct rspamd_task *task,
 	goffset hdr_pos, body_pos;
 	enum rspamd_mime_parse_error ret = RSPAMD_MIME_PARSE_FATAL;
 
+	if (start == NULL || end == NULL || start >= end) {
+		return RSPAMD_MIME_PARSE_NO_PART;
+	}
 
 	str.str = (char *) start;
 	str.len = end - start;
