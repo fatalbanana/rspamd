@@ -170,6 +170,18 @@ struct rspamd_lua_map {
 struct rspamd_lua_upstream {
 	struct upstream *up;
 	int upref;
+	/*
+	 * Inflight bookkeeping for the C-side P2C load comparator. acquired is
+	 * set when this wrapper holds the inflight reference produced by a
+	 * get_* call (round-robin / hashed / master-slave). retired is set the
+	 * first time :ok or :fail is called. If acquired && !retired at __gc
+	 * time, the destructor calls rspamd_upstream_release so abandoned
+	 * selections don't permanently skew P2C scoring. Wrappers handed out
+	 * by all_upstreams() or watch callbacks set acquired = FALSE and the
+	 * destructor leaves inflight alone.
+	 */
+	gboolean acquired;
+	gboolean retired;
 };
 
 /* Common utility functions */
