@@ -83,6 +83,15 @@ static khash_t(mempool_entry) *mempool_entries = NULL;
 
 /* Internal statistic */
 static rspamd_mempool_stat_t *mem_pool_stat = NULL;
+/*
+ * Per-process counters that mirror mem_pool_stat. Unlike the shared mmap
+ * above (which is created with MAP_ANON|MAP_SHARED in the parent before
+ * fork and therefore aggregates allocations across every worker), this
+ * struct lives in the BSS and is duplicated on fork, so each worker keeps
+ * its own running totals. The mirror is updated alongside every shared
+ * counter mutation.
+ */
+static rspamd_mempool_stat_t mem_pool_stat_local;
 /* Environment variable */
 static gboolean env_checked = FALSE;
 static gboolean always_malloc = FALSE;
@@ -219,7 +228,9 @@ rspamd_mempool_chain_new(gsize size, gsize alignment, enum rspamd_mempool_chain_
 #error No mmap methods are defined
 #endif
 		g_atomic_int_inc(&mem_pool_stat->shared_chunks_allocated);
+		g_atomic_int_inc(&mem_pool_stat_local.shared_chunks_allocated);
 		g_atomic_int_add(&mem_pool_stat->bytes_allocated, total_size);
+		g_atomic_int_add(&mem_pool_stat_local.bytes_allocated, total_size);
 	}
 	else {
 #ifdef HAVE_MALLOC_SIZE
@@ -237,7 +248,9 @@ rspamd_mempool_chain_new(gsize size, gsize alignment, enum rspamd_mempool_chain_
 		chain = map;
 		chain->begin = ((uint8_t *) chain) + sizeof(struct _pool_chain);
 		g_atomic_int_add(&mem_pool_stat->bytes_allocated, total_size);
+		g_atomic_int_add(&mem_pool_stat_local.bytes_allocated, total_size);
 		g_atomic_int_inc(&mem_pool_stat->chunks_allocated);
+		g_atomic_int_inc(&mem_pool_stat_local.chunks_allocated);
 	}
 
 	chain->pos = align_ptr(chain->begin, alignment);
@@ -428,6 +441,7 @@ rspamd_mempool_new_(gsize size, const char *tag, int flags, const char *loc)
 	new_pool->tag.uid[enc_len] = '\0';
 
 	mem_pool_stat->pools_allocated++;
+	mem_pool_stat_local.pools_allocated++;
 
 	/* Now we can attach one chunk to speed up simple allocations */
 	struct _pool_chain *nchain;
@@ -451,7 +465,10 @@ rspamd_mempool_new_(gsize size, const char *tag, int flags, const char *loc)
 	/* Adjust stats */
 	g_atomic_int_add(&mem_pool_stat->bytes_allocated,
 					 (int) size);
+	g_atomic_int_add(&mem_pool_stat_local.bytes_allocated,
+					 (int) size);
 	g_atomic_int_add(&mem_pool_stat->chunks_allocated, 1);
+	g_atomic_int_add(&mem_pool_stat_local.chunks_allocated, 1);
 
 	return new_pool;
 }
@@ -539,7 +556,10 @@ memory_pool_alloc_common(rspamd_mempool_t *pool, gsize size, gsize alignment,
 			}
 			else {
 				mem_pool_stat->oversized_chunks++;
+				mem_pool_stat_local.oversized_chunks++;
 				g_atomic_int_add(&mem_pool_stat->fragmented_size,
+								 free);
+				g_atomic_int_add(&mem_pool_stat_local.fragmented_size,
 								 free);
 				pool->priv->entry->elts[pool->priv->entry->cur_elts].fragmentation += free;
 				new = rspamd_mempool_chain_new(size + pool->priv->elt_len, alignment,
@@ -984,7 +1004,10 @@ void rspamd_mempool_delete(rspamd_mempool_t *pool)
 			{
 				g_atomic_int_add(&mem_pool_stat->bytes_allocated,
 								 -((int) cur->slice_size));
+				g_atomic_int_add(&mem_pool_stat_local.bytes_allocated,
+								 -((int) cur->slice_size));
 				g_atomic_int_add(&mem_pool_stat->chunks_allocated, -1);
+				g_atomic_int_add(&mem_pool_stat_local.chunks_allocated, -1);
 
 				len = cur->slice_size + sizeof(struct _pool_chain);
 
@@ -1002,6 +1025,7 @@ void rspamd_mempool_delete(rspamd_mempool_t *pool)
 	}
 
 	g_atomic_int_inc(&mem_pool_stat->pools_freed);
+	g_atomic_int_inc(&mem_pool_stat_local.pools_freed);
 	POOL_MTX_UNLOCK();
 	free(pool); /* allocated by posix_memalign */
 }
@@ -1024,6 +1048,23 @@ void rspamd_mempool_stat_reset(void)
 	if (mem_pool_stat != NULL) {
 		memset(mem_pool_stat, 0, sizeof(rspamd_mempool_stat_t));
 	}
+	memset(&mem_pool_stat_local, 0, sizeof(mem_pool_stat_local));
+}
+
+void rspamd_mempool_stat_local(rspamd_mempool_stat_t *st)
+{
+	if (st == NULL) {
+		return;
+	}
+
+	st->pools_allocated = mem_pool_stat_local.pools_allocated;
+	st->pools_freed = mem_pool_stat_local.pools_freed;
+	st->shared_chunks_allocated = mem_pool_stat_local.shared_chunks_allocated;
+	st->bytes_allocated = mem_pool_stat_local.bytes_allocated;
+	st->chunks_allocated = mem_pool_stat_local.chunks_allocated;
+	st->chunks_freed = mem_pool_stat_local.chunks_freed;
+	st->oversized_chunks = mem_pool_stat_local.oversized_chunks;
+	st->fragmented_size = mem_pool_stat_local.fragmented_size;
 }
 
 void rspamd_mempool_entries_foreach(rspamd_mempool_entry_cb cb, void *ud)

@@ -363,13 +363,25 @@ void rspamd_mempool_runlock_rwlock(rspamd_mempool_rwlock_t *lock);
 void rspamd_mempool_wunlock_rwlock(rspamd_mempool_rwlock_t *lock);
 
 /**
- * Get pool allocator statistics
+ * Get pool allocator statistics aggregated across every process that
+ * shares the rspamd mempool counters page (i.e. rspamd_main plus all
+ * forked workers, since the page is mmap'd MAP_SHARED before fork).
  * @param st stat pool struct
  */
 void rspamd_mempool_stat(rspamd_mempool_stat_t *st);
 
 /**
- * Reset memory pool stat
+ * Get the calling process's local view of the mempool counters. Unlike
+ * rspamd_mempool_stat(), the underlying counters live in the BSS and are
+ * duplicated on fork, so each worker reports its own running totals from
+ * program start (counters accumulated before fork are inherited as the
+ * baseline; resetting at fork time is the caller's responsibility).
+ * @param st destination stat struct, must be non-NULL
+ */
+void rspamd_mempool_stat_local(rspamd_mempool_stat_t *st);
+
+/**
+ * Reset memory pool stat (both the shared aggregate and the local copy).
  */
 void rspamd_mempool_stat_reset(void);
 

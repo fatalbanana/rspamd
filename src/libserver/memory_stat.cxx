@@ -88,9 +88,14 @@ void emit_process_info(ucl_object_t *parent)
 uint64_t
 emit_mempool_info(ucl_object_t *parent)
 {
+	/*
+	 * Use the per-process counters here: rspamd_mempool_stat() reads from
+	 * a MAP_SHARED page and would return the same value in every worker,
+	 * which makes per-worker reporting and the aggregate total useless.
+	 */
 	rspamd_mempool_stat_t agg;
 	memset(&agg, 0, sizeof(agg));
-	rspamd_mempool_stat(&agg);
+	rspamd_mempool_stat_local(&agg);
 
 	auto *mp = ucl_object_typed_new(UCL_OBJECT);
 
