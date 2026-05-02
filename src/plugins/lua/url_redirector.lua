@@ -48,11 +48,11 @@ local settings = {
   -- .write_timeout, .read_timeout for granular control.
   http_timeout = 4,
   redis_timeout = 2, -- redis timeout for cache operations  (redis.conf module has higher priority)
-  nested_limit = 5, -- how many redirects to follow
+  nested_limit = 2, -- how many redirects to follow
   --proxy = "http://example.com:3128", -- send request through proxy, not yet implemented
   key_prefix = 'rdr:', -- default hash name
   check_ssl = false, -- check ssl certificates
-  max_urls = 5, -- how many urls to check (СTA checked in first place)
+  max_urls = 5, -- how many urls to check (CTA checked in first place)
   max_size = 10 * 1024, -- maximum body to process
   user_agent = default_ua,
   redirector_symbol = nil, -- insert symbol if redirected url has been found
@@ -293,7 +293,7 @@ local redirection_codes = {
 -- exhaustion, finalize with terminal_prefix='nested' so the cache
 -- marks the tail with ^nested and a future scan can pick up from
 -- there with a fresh HTTP budget (self-healing chain).
-local function http_walk(task, orig_url, url, ntries, chain)
+local function http_walk(task, orig_url, url, ntries, chain, seen)
   if ntries > settings.nested_limit then
     lua_util.debugm(N, task,
         'cannot get more http requests to resolve %s, stop on %s after %s attempts',
@@ -304,6 +304,20 @@ local function http_walk(task, orig_url, url, ntries, chain)
         string.format('%s:%d', chain_hosts_string(chain), ntries))
     return
   end
+
+  -- Mirror the cache walk's cycle guard: a redirector loop A->B->A->B
+  -- (e.g. login redirector flapping between two hosts) would otherwise
+  -- chew through nested_limit and bloat the chain with alternating
+  -- entries. Skip the check at ntries==1 because url is the entry point
+  -- (orig_url on a fresh resolve, or the cached terminal that step()
+  -- just bridged from -- already added to seen).
+  local url_str = tostring(url)
+  if ntries > 1 and seen[url_str] then
+    lua_util.debugm(N, task, 'cycle in http walk at %s', url_str)
+    apply_redirect_chain(task, chain)
+    return
+  end
+  seen[url_str] = true
 
   local function http_callback(err, code, _, headers)
     if err then
@@ -355,7 +369,7 @@ local function http_walk(task, orig_url, url, ntries, chain)
       if redir_url then
         if settings.redirectors_only then
           if settings.redirector_hosts_map:get_key(redir_url:get_host()) then
-            http_walk(task, orig_url, redir_url, ntries + 1, chain)
+            http_walk(task, orig_url, redir_url, ntries + 1, chain, seen)
           else
             lua_util.debugm(N, task,
                 'stop resolving redirects as %s is not a redirector', loc)
@@ -363,7 +377,7 @@ local function http_walk(task, orig_url, url, ntries, chain)
             finalize_chain(task, chain, nil)
           end
         else
-          http_walk(task, orig_url, redir_url, ntries + 1, chain)
+          http_walk(task, orig_url, redir_url, ntries + 1, chain, seen)
         end
       else
         lua_util.debugm(N, task, 'no location, headers: %s', headers)
@@ -484,7 +498,7 @@ local function resolve_cached(task, orig_url)
       -- gets rewritten as ^hop and the chain grows in cache.
       lua_util.debugm(N, task,
           'extending past cached ^nested:%s with live HTTP', val)
-      http_walk(task, orig_url, hop, 1, local_chain)
+      http_walk(task, orig_url, hop, 1, local_chain, seen)
       return
     end
 
@@ -508,7 +522,7 @@ local function resolve_cached(task, orig_url)
         rspamd_logger.errx(task,
             'got error while setting redirect keys: %s', nerr)
       elseif ndata == 'OK' then
-        http_walk(task, orig_url, orig_url, 1, chain)
+        http_walk(task, orig_url, orig_url, 1, chain, seen)
       end
     end
 
@@ -516,7 +530,7 @@ local function resolve_cached(task, orig_url)
         redis_params, key, true, redis_reserve_cb,
         'SET',
         { key, 'processing', 'EX',
-          tostring(math.floor(settings.timeout)), 'NX' })
+          tostring(math.floor(settings.timeout) + 1), 'NX' })
     if not ret then
       rspamd_logger.errx(task, "Couldn't schedule SET")
     end
