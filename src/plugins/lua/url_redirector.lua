@@ -297,8 +297,12 @@ local http_walk
 -- hash(chain[#chain]); pass nil to issue the GET. seen is the shared
 -- per-scan URL-string set (cache walk and http_walk write to it so
 -- cycles crossing both layers are caught with one extra Redis GET at
--- worst).
-step = function(task, orig_url, chain, seen, data)
+-- worst). ntries is the count of HTTP HEADs already issued in this
+-- scan -- threaded through cache hops without change so the
+-- ^nested-bridge below hands http_walk the correct remaining budget,
+-- not a fresh nested_limit. Defaults to 0 for top-level cache walks.
+step = function(task, orig_url, chain, seen, data, ntries)
+  ntries = ntries or 0
   if data == nil then
     local last = chain[#chain]
     local next_key = cache_key_for_url(tostring(last))
@@ -310,7 +314,7 @@ step = function(task, orig_url, chain, seen, data)
             apply_redirect_chain(task, chain)
             return
           end
-          step(task, orig_url, chain, seen, d)
+          step(task, orig_url, chain, seen, d, ntries)
         end,
         'GET', { next_key })
     if not ret then
@@ -344,18 +348,21 @@ step = function(task, orig_url, chain, seen, data)
   seen[val] = true
 
   if prefix == 'hop' then
-    step(task, orig_url, chain, seen, nil)
+    step(task, orig_url, chain, seen, nil, ntries)
     return
   end
 
   if prefix == 'nested' then
     -- Cached walk ended on "we ran out of HTTP budget last time".
-    -- Budget is fresh per scan -- extend live from this hop. If the
-    -- extension finalizes successfully, the upstream ^nested marker
-    -- gets rewritten as ^hop and the chain grows in cache.
+    -- Hand off to http_walk for a live extension. ntries+1 is the
+    -- index of the next HEAD in this scan -- not 1 -- so any HEADs
+    -- already done before the cache splice still count toward
+    -- nested_limit. If the extension finalizes successfully, the
+    -- upstream ^nested marker is rewritten as ^hop and the chain
+    -- grows in cache.
     lua_util.debugm(N, task,
         'extending past cached ^nested:%s with live HTTP', val)
-    http_walk(task, orig_url, hop, 1, chain, seen)
+    http_walk(task, orig_url, hop, ntries + 1, chain, seen)
     return
   end
 
@@ -474,7 +481,10 @@ http_walk = function(task, orig_url, url, ntries, chain, seen)
                       redir_url)
                   chain_append(chain, redir_url)
                   seen[tostring(redir_url)] = true
-                  step(task, orig_url, chain, seen, probe_data)
+                  -- Pass current ntries so any onward ^nested-bridge
+                  -- inside step counts HEADs already done in this
+                  -- scan toward nested_limit, instead of resetting.
+                  step(task, orig_url, chain, seen, probe_data, ntries)
                 else
                   http_walk(task, orig_url, redir_url, ntries + 1, chain, seen)
                 end
@@ -550,7 +560,9 @@ local function resolve_cached(task, orig_url)
     if not err and type(data) == 'string' and data ~= 'processing' then
       lua_util.debugm(N, task, 'found cached redirect from %s to %s',
           orig_url, data)
-      step(task, orig_url, chain, seen, data)
+      -- Top-level cache hit: no HEADs done yet, so ntries=0 means a
+      -- ^nested-bridge later gets the full nested_limit budget.
+      step(task, orig_url, chain, seen, data, 0)
       return
     end
 
