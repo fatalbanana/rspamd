@@ -103,6 +103,16 @@ void rspamd_upstream_fail(struct upstream *upstream, gboolean addr_failure, cons
 void rspamd_upstream_ok(struct upstream *up);
 
 /**
+ * Retire an upstream selection without affecting error counters or latency.
+ * Use this when neither success nor failure semantics apply: message-copy
+ * failures after a successful selection, fire-and-forget address lookups,
+ * or hand-off paths where success/failure is signalled by a different
+ * layer. Decrements the inflight counter so P2C load comparisons stay
+ * accurate; otherwise abandoned selections would skew selection forever.
+ */
+void rspamd_upstream_release(struct upstream *up);
+
+/**
  * Set weight for an upstream
  * @param up
  */

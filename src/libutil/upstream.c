@@ -1344,6 +1344,22 @@ void rspamd_upstream_ok(struct upstream *upstream)
 	RSPAMD_UPSTREAM_UNLOCK(upstream);
 }
 
+void rspamd_upstream_release(struct upstream *up)
+{
+	if (up == NULL) {
+		return;
+	}
+
+	RSPAMD_UPSTREAM_LOCK(up);
+	/* Pair with the increment in rspamd_upstream_get_common /
+	 * rspamd_upstream_get_token_bucket without disturbing error or
+	 * latency state. */
+	if (up->inflight > 0) {
+		up->inflight--;
+	}
+	RSPAMD_UPSTREAM_UNLOCK(up);
+}
+
 void rspamd_upstream_set_weight(struct upstream *up, unsigned int weight)
 {
 	RSPAMD_UPSTREAM_LOCK(up);

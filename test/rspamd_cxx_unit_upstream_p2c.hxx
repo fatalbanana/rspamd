@@ -195,6 +195,47 @@ TEST_SUITE("upstream_p2c")
 		}
 	}
 
+	TEST_CASE("release retires inflight without affecting selection bias")
+	{
+		/*
+		 * release() must decrement inflight just like ok()/fail() do, so
+		 * abandoned selections (e.g. message-copy failures, fire-and-forget
+		 * lookups) don't permanently skew the P2C comparator. We verify by
+		 * leaking via release on one upstream and checking that selection
+		 * stays balanced — unlike the "loaded upstream" test where leaking
+		 * with no retirement skews selection away from it.
+		 */
+		p2c_test_ctx t(3);
+		std::map<std::string, int> hits;
+
+		/* Burn many get/release pairs on whatever P2C picks first. If
+		 * release didn't retire inflight, that upstream would build up
+		 * a load score and stop being picked. */
+		for (int i = 0; i < 100; i++) {
+			auto *up = rspamd_upstream_get(t.ups, RSPAMD_UPSTREAM_P2C, nullptr, 0);
+			REQUIRE(up != nullptr);
+			rspamd_upstream_release(up);
+		}
+
+		for (int i = 0; i < 1500; i++) {
+			auto *up = rspamd_upstream_get(t.ups, RSPAMD_UPSTREAM_P2C, nullptr, 0);
+			REQUIRE(up != nullptr);
+			hits[rspamd_upstream_name(up)]++;
+			rspamd_upstream_ok(up);
+		}
+
+		CHECK(hits.size() == 3);
+		for (const auto &[name, count]: hits) {
+			/* Each ~500; ±40% tolerance to absorb P2C noise. */
+			CHECK(count >= 300);
+		}
+	}
+
+	TEST_CASE("release on null is a no-op")
+	{
+		rspamd_upstream_release(nullptr);
+	}
+
 	TEST_CASE("get/fail rounds keep inflight bounded")
 	{
 		/*
