@@ -197,7 +197,7 @@ lua_upstream_fail(lua_State *L)
 		}
 
 		rspamd_upstream_fail(up->up, fail_addr, reason);
-		up->retired = TRUE;
+		up->retired = 1;
 	}
 
 	return 0;
@@ -215,7 +215,7 @@ lua_upstream_ok(lua_State *L)
 
 	if (up) {
 		rspamd_upstream_ok(up->up);
-		up->retired = TRUE;
+		up->retired = 1;
 	}
 
 	return 0;
@@ -268,8 +268,8 @@ lua_push_upstream(lua_State *L, int up_idx, struct upstream *up,
 
 	lua_ups = lua_newuserdata(L, sizeof(*lua_ups));
 	lua_ups->up = up;
-	lua_ups->acquired = acquired;
-	lua_ups->retired = FALSE;
+	lua_ups->acquired = acquired ? 1 : 0;
+	lua_ups->retired = 0;
 	rspamd_lua_setclass(L, rspamd_upstream_classname, -1);
 	/* Store parent in the upstream to prevent gc */
 	lua_pushvalue(L, up_idx);
@@ -586,8 +586,8 @@ lua_upstream_watch_func(struct upstream *up,
 	struct rspamd_lua_upstream *lua_ups = lua_newuserdata(L, sizeof(*lua_ups));
 	lua_ups->up = up;
 	/* Watcher event: no inflight reference, leave it that way on __gc. */
-	lua_ups->acquired = FALSE;
-	lua_ups->retired = FALSE;
+	lua_ups->acquired = 0;
+	lua_ups->retired = 0;
 	rspamd_lua_setclass(L, rspamd_upstream_classname, -1);
 	/* Store parent in the upstream to prevent gc */
 	lua_rawgeti(L, LUA_REGISTRYINDEX, cdata->parent_cbref);

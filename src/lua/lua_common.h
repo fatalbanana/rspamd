@@ -177,11 +177,12 @@ struct rspamd_lua_upstream {
 	 * first time :ok or :fail is called. If acquired && !retired at __gc
 	 * time, the destructor calls rspamd_upstream_release so abandoned
 	 * selections don't permanently skew P2C scoring. Wrappers handed out
-	 * by all_upstreams() or watch callbacks set acquired = FALSE and the
-	 * destructor leaves inflight alone.
+	 * by all_upstreams() or watch callbacks set acquired = 0 and the
+	 * destructor leaves inflight alone. Bitfields keep the wrapper at
+	 * sizeof(ptr) + 8 instead of bloating it with two padded gint slots.
 	 */
-	gboolean acquired;
-	gboolean retired;
+	unsigned int acquired : 1;
+	unsigned int retired : 1;
 };
 
 /* Common utility functions */
