@@ -1329,6 +1329,13 @@ rspamd_http_connection_new_client(struct rspamd_http_context *ctx,
 				return NULL;
 			}
 
+			/* The selected proxy upstream is handed off to new_common but
+			 * never tracked through the request lifecycle here; retire the
+			 * inflight counter at connect-success time so P2C scoring stays
+			 * accurate. Wiring per-request success/failure is left for a
+			 * follow-up. */
+			rspamd_upstream_release(up);
+
 			return rspamd_http_connection_new_common(ctx, fd, body_handler,
 													 error_handler, finish_handler, opts,
 													 RSPAMD_HTTP_CLIENT,

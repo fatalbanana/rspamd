@@ -7170,6 +7170,10 @@ fuzzy_lua_ping_storage(lua_State *L)
 			return 2;
 		}
 		addr = rspamd_upstream_addr_next(selected);
+		/* Fire-and-forget ping: the session below tracks the address
+		 * directly, not the upstream, so retire the inflight counter
+		 * immediately rather than leaking it. */
+		rspamd_upstream_release(selected);
 	}
 
 	if (addr != NULL) {
