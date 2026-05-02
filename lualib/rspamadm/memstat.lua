@@ -23,14 +23,32 @@ local parser = argparse()
     :help_description_margin(32)
 parser:flag "-n --number"
       :description "Disable numbers humanization"
+parser:flag "-s --short"
+      :description "Short output: only the per-worker summary table"
 parser:option "--top"
       :description "Show top-N mempool callsites per worker (default 20)"
       :convert(tonumber)
       :default(20)
+parser:flag "--no-process"
+      :description "Skip per-worker process memory breakdown"
+parser:flag "--no-mempool"
+      :description "Skip mempool aggregate section"
 parser:flag "--no-callsites"
       :description "Skip per-callsite mempool breakdown"
+parser:flag "--no-lua"
+      :description "Skip Lua heap section"
 parser:flag "--no-jemalloc"
-      :description "Skip jemalloc text dump"
+      :description "Skip jemalloc section"
+parser:option "--sort"
+      :description "Sort summary table by: rss, lua, mempool, jemalloc, pid (default pid)"
+      :convert {
+        rss = "rss",
+        lua = "lua",
+        mempool = "mempool",
+        jemalloc = "jemalloc",
+        pid = "pid",
+      }
+      :default("pid")
 
 local function bytes(n, raw)
   if not n then
@@ -55,6 +73,30 @@ local function sorted_keys(t, cmp)
   return out
 end
 
+local function summary_sorter(workers, mode)
+  if mode == nil or mode == "pid" then
+    return pid_sort
+  end
+  local field_map = {
+    rss = "rss_kb",
+    lua = "lua_kb",
+    mempool = "mempool_bytes",
+    jemalloc = "jemalloc_allocated",
+  }
+  local field = field_map[mode]
+  if not field then
+    return pid_sort
+  end
+  return function(a, b)
+    local av = workers[a] and workers[a][field] or 0
+    local bv = workers[b] and workers[b][field] or 0
+    if av == bv then
+      return tonumber(a) < tonumber(b)
+    end
+    return av > bv
+  end
+end
+
 local function print_summary(workers, total, opts)
   print("Memory usage by worker:")
   print("")
@@ -62,7 +104,7 @@ local function print_summary(workers, total, opts)
       "pid", "type", "RSS", "Lua", "mempool", "jemalloc"))
   print("  " .. string.rep("-", 67))
 
-  for _, pid in ipairs(sorted_keys(workers, pid_sort)) do
+  for _, pid in ipairs(sorted_keys(workers, summary_sorter(workers, opts.sort))) do
     local w = workers[pid]
     print(string.format("  %-7s %-13s %10s %10s %10s %12s",
         pid,
@@ -150,9 +192,6 @@ local function print_mempool_aggregate(workers, opts)
 end
 
 local function print_callsites(workers, opts)
-  if opts.no_callsites then
-    return
-  end
   local limit = opts.top or 20
   local any = false
   for _, pid in ipairs(sorted_keys(workers, pid_sort)) do
@@ -239,7 +278,7 @@ local function print_jemalloc(workers, opts)
           print("    config: " .. table.concat(parts, "  "))
         end
       end
-      if not opts.no_jemalloc and j.text and #j.text > 0 then
+      if j.text and #j.text > 0 then
         print("    --- malloc_stats_print ---")
         for line in tostring(j.text):gmatch("[^\r\n]+") do
           print("    " .. line)
@@ -259,9 +298,24 @@ return function(args, res)
   local total = res and res.total
 
   print_summary(workers, total, opts)
-  print_process(workers, opts)
-  print_mempool_aggregate(workers, opts)
-  print_callsites(workers, opts)
-  print_lua(workers, opts)
-  print_jemalloc(workers, opts)
+
+  if opts.short then
+    return
+  end
+
+  if not opts.no_process then
+    print_process(workers, opts)
+  end
+  if not opts.no_mempool then
+    print_mempool_aggregate(workers, opts)
+  end
+  if not opts.no_callsites then
+    print_callsites(workers, opts)
+  end
+  if not opts.no_lua then
+    print_lua(workers, opts)
+  end
+  if not opts.no_jemalloc then
+    print_jemalloc(workers, opts)
+  end
 end
