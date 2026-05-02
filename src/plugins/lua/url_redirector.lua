@@ -285,15 +285,96 @@ local redirection_codes = {
   [308] = true, -- permanent redirect
 }
 
+-- step (cache walk) and http_walk (live HEAD) are mutually recursive:
+-- step bridges to http_walk on '^nested' to extend a partially-resolved
+-- chain; http_walk splices into step on a 30x whose redirect target has
+-- a cached chain (saves redundant HEADs across emails that share an
+-- intermediate). Forward-declare so each can name the other.
+local step
+local http_walk
+
+-- Walk a cached redirect chain. data is the Redis value for
+-- hash(chain[#chain]); pass nil to issue the GET. seen is the shared
+-- per-scan URL-string set (cache walk and http_walk write to it so
+-- cycles crossing both layers are caught with one extra Redis GET at
+-- worst).
+step = function(task, orig_url, chain, seen, data)
+  if data == nil then
+    local last = chain[#chain]
+    local next_key = cache_key_for_url(tostring(last))
+    local ret = lua_redis.redis_make_request(task,
+        redis_params, next_key, false,
+        function(e, d)
+          if e or type(d) ~= 'string' or d == 'processing' then
+            -- Cache miss / lock mid-walk: apply what we have.
+            apply_redirect_chain(task, chain)
+            return
+          end
+          step(task, orig_url, chain, seen, d)
+        end,
+        'GET', { next_key })
+    if not ret then
+      rspamd_logger.errx(task, 'cannot make redis request to walk chain')
+      apply_redirect_chain(task, chain)
+    end
+    return
+  end
+
+  local prefix, val = nil, data
+  if data:sub(1, 1) == '^' then
+    local p, v = data:match('^%^(%a+):(.+)$')
+    if p then
+      prefix, val = p, v
+    end
+  end
+
+  if seen[val] then
+    lua_util.debugm(N, task, 'cycle in cached chain at %s', val)
+    apply_redirect_chain(task, chain)
+    return
+  end
+
+  local hop = rspamd_url.create(task:get_mempool(), val,
+      { 'redirect_target' })
+  if not hop then
+    apply_redirect_chain(task, chain)
+    return
+  end
+  chain_append(chain, hop)
+  seen[val] = true
+
+  if prefix == 'hop' then
+    step(task, orig_url, chain, seen, nil)
+    return
+  end
+
+  if prefix == 'nested' then
+    -- Cached walk ended on "we ran out of HTTP budget last time".
+    -- Budget is fresh per scan -- extend live from this hop. If the
+    -- extension finalizes successfully, the upstream ^nested marker
+    -- gets rewritten as ^hop and the chain grows in cache.
+    lua_util.debugm(N, task,
+        'extending past cached ^nested:%s with live HTTP', val)
+    http_walk(task, orig_url, hop, 1, chain, seen)
+    return
+  end
+
+  -- Plain terminal: chain fully resolved, apply.
+  apply_redirect_chain(task, chain)
+end
+
 -- Live HTTP HEAD walk. ntries counts only HTTP requests; the cache walk
--- (in resolve_cached's step()) does not consume this budget. Bounded by
--- settings.nested_limit. On any terminal -- 200, network error,
--- non-redirector under redirectors_only=true, non-30x non-200, or
--- failed Location parse -- finalize the chain. On nested_limit
--- exhaustion, finalize with terminal_prefix='nested' so the cache
--- marks the tail with ^nested and a future scan can pick up from
--- there with a fresh HTTP budget (self-healing chain).
-local function http_walk(task, orig_url, url, ntries, chain, seen)
+-- (step()) does not consume this budget. Bounded by settings.nested_limit.
+-- On any terminal -- 200, network error, non-redirector under
+-- redirectors_only=true, non-30x non-200, or failed Location parse --
+-- finalize the chain. On nested_limit exhaustion, finalize with
+-- terminal_prefix='nested' so the cache marks the tail with ^nested and
+-- a future scan can pick up from there with a fresh HTTP budget.
+--
+-- Before recursing on a 30x's redirect target, probe the cache: shared
+-- intermediates (e.g. multiple shortlinks all funneling through one
+-- redirector host) get walked via step() instead of duplicate HEADs.
+http_walk = function(task, orig_url, url, ntries, chain, seen)
   if ntries > settings.nested_limit then
     lua_util.debugm(N, task,
         'cannot get more http requests to resolve %s, stop on %s after %s attempts',
@@ -367,17 +448,48 @@ local function http_walk(task, orig_url, url, ntries, chain, seen)
       end
 
       if redir_url then
+        local should_follow
         if settings.redirectors_only then
-          if settings.redirector_hosts_map:get_key(redir_url:get_host()) then
+          should_follow = settings.redirector_hosts_map:get_key(redir_url:get_host()) ~= nil
+        else
+          should_follow = true
+        end
+
+        if should_follow then
+          -- Probe cache for redir_url before HEADing it. If a chain is
+          -- already cached at hash(redir_url) (typical when many
+          -- shortlinks share a redirector intermediate, or when a prior
+          -- scan resolved redir_url as its own orig), splice into step
+          -- and let the cache walk continue from there. Cache miss/lock:
+          -- fall back to live HEAD as before.
+          local k = cache_key_for_url(tostring(redir_url))
+          local ret = lua_redis.redis_make_request(task,
+              redis_params, k, false,
+              function(probe_err, probe_data)
+                if not probe_err
+                    and type(probe_data) == 'string'
+                    and probe_data ~= 'processing' then
+                  lua_util.debugm(N, task,
+                      'cache hit on redirect target %s, splicing into cache walk',
+                      redir_url)
+                  chain_append(chain, redir_url)
+                  seen[tostring(redir_url)] = true
+                  step(task, orig_url, chain, seen, probe_data)
+                else
+                  http_walk(task, orig_url, redir_url, ntries + 1, chain, seen)
+                end
+              end,
+              'GET', { k })
+          if not ret then
+            rspamd_logger.errx(task,
+                'cannot probe cache for redirect target, falling through to HEAD')
             http_walk(task, orig_url, redir_url, ntries + 1, chain, seen)
-          else
-            lua_util.debugm(N, task,
-                'stop resolving redirects as %s is not a redirector', loc)
-            chain_append(chain, redir_url)
-            finalize_chain(task, chain, nil)
           end
         else
-          http_walk(task, orig_url, redir_url, ntries + 1, chain, seen)
+          lua_util.debugm(N, task,
+              'stop resolving redirects as %s is not a redirector', loc)
+          chain_append(chain, redir_url)
+          finalize_chain(task, chain, nil)
         end
       else
         lua_util.debugm(N, task, 'no location, headers: %s', headers)
@@ -400,8 +512,8 @@ local function http_walk(task, orig_url, url, ntries, chain, seen)
     ua = settings.user_agent
   else
     ua = settings.user_agent[math.random(#settings.user_agent)]
-    lua_util.debugm(N, task, 'select user agent %s', ua)
   end
+  lua_util.debugm(N, task, 'query %s with user agent %s', tostring(url), ua)
 
   local http_params = {
     headers = { ['User-Agent'] = ua },
@@ -421,16 +533,9 @@ end
 -- apply a fully-resolved chain to the task or hand off to http_walk
 -- on cache miss / lock / partial walk.
 --
--- The cache walk itself is unbounded -- Redis lookups are cheap and
--- chains should self-extend across scans. Cycle protection is a
--- per-walk seen-set keyed by URL string (defends against pathological
--- cross-email cache writes that could form a loop).
---
--- On a cached ^nested terminal, hand off to http_walk with a fresh
--- HTTP budget. If the live walk extends the chain, finalize_chain
--- overwrites the upstream ^nested marker with ^hop and writes the new
--- tail; the chain effectively grows by up to nested_limit hops per
--- scan.
+-- Cache walks (step) are unbounded; only HTTP consumes nested_limit.
+-- Cycle protection is a per-walk seen-set keyed by URL string that
+-- both step and http_walk share, so cycles spanning the two are caught.
 local function resolve_cached(task, orig_url)
   local key = cache_key_for_url(tostring(orig_url))
   local chain = { orig_url }
@@ -441,76 +546,11 @@ local function resolve_cached(task, orig_url)
   -- dedup keeps us from double-appending orig in that case.
   local seen = {}
 
-  local function step(local_chain, data)
-    if data == nil then
-      local last = local_chain[#local_chain]
-      local next_key = cache_key_for_url(tostring(last))
-      local ret = lua_redis.redis_make_request(task,
-          redis_params, next_key, false,
-          function(e, d)
-            if e or type(d) ~= 'string' or d == 'processing' then
-              -- Cache miss / lock mid-walk: apply what we have.
-              apply_redirect_chain(task, local_chain)
-              return
-            end
-            step(local_chain, d)
-          end,
-          'GET', { next_key })
-      if not ret then
-        rspamd_logger.errx(task, 'cannot make redis request to walk chain')
-        apply_redirect_chain(task, local_chain)
-      end
-      return
-    end
-
-    local prefix, val = nil, data
-    if data:sub(1, 1) == '^' then
-      local p, v = data:match('^%^(%a+):(.+)$')
-      if p then
-        prefix, val = p, v
-      end
-    end
-
-    if seen[val] then
-      lua_util.debugm(N, task, 'cycle in cached chain at %s', val)
-      apply_redirect_chain(task, local_chain)
-      return
-    end
-
-    local hop = rspamd_url.create(task:get_mempool(), val,
-        { 'redirect_target' })
-    if not hop then
-      apply_redirect_chain(task, local_chain)
-      return
-    end
-    chain_append(local_chain, hop)
-    seen[val] = true
-
-    if prefix == 'hop' then
-      step(local_chain, nil)
-      return
-    end
-
-    if prefix == 'nested' then
-      -- Cached walk ended on "we ran out of HTTP budget last time".
-      -- Budget is fresh per scan -- extend live from this hop. If the
-      -- extension finalizes successfully, the upstream ^nested marker
-      -- gets rewritten as ^hop and the chain grows in cache.
-      lua_util.debugm(N, task,
-          'extending past cached ^nested:%s with live HTTP', val)
-      http_walk(task, orig_url, hop, 1, local_chain, seen)
-      return
-    end
-
-    -- Plain terminal: chain fully resolved, apply.
-    apply_redirect_chain(task, local_chain)
-  end
-
   local function redis_get_cb(err, data)
     if not err and type(data) == 'string' and data ~= 'processing' then
       lua_util.debugm(N, task, 'found cached redirect from %s to %s',
           orig_url, data)
-      step(chain, data)
+      step(task, orig_url, chain, seen, data)
       return
     end
 
