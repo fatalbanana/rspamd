@@ -7,47 +7,43 @@ Resource        ${RSPAMD_TESTDIR}/lib/rspamd.robot
 Variables       ${RSPAMD_TESTDIR}/lib/vars.py
 
 *** Variables ***
-${CONFIG}          ${RSPAMD_TESTDIR}/configs/url_redirector_chain.conf
-${MESSAGE}         ${RSPAMD_TESTDIR}/messages/chain_redirect.eml
+${CONFIG}          ${RSPAMD_TESTDIR}/configs/url_redirector.conf
+${MESSAGE}         ${RSPAMD_TESTDIR}/messages/redir.eml
 ${REDIS_SCOPE}     Suite
 ${RSPAMD_SCOPE}    Suite
 ${RSPAMD_URL_TLD}  ${RSPAMD_TESTDIR}/../lua/unit/test_tld.dat
 ${SETTINGS}        {symbols_enabled=[URL_REDIRECTOR_CHECK]}
 
 *** Test Cases ***
-INTERMEDIATE HOP INJECTION
-  [Documentation]  Test that intermediate hops in redirect chains are injected into the task
-  ...              for scanning by downstream modules (phishing, SURBL, etc.)
+BASIC CHAIN RESOLUTION AND CACHING
+  [Documentation]  Test chain resolution with intermediate hops and caching
+  Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
+  Expect Extended URL  http://127.0.0.1:18080/hello
   Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
-INTERMEDIATE HOP CACHING
-  [Documentation]  Test that cached intermediate hops are properly handled with markers
-  Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
-  Expect Extended URL  http://127.0.0.1:18080/hello
-
-NESTED MARKER HANDLING
-  [Documentation]  Test that ^nested: markers are handled correctly for limit exceeded
+NESTED LIMIT MARKER
+  [Documentation]  Test ^nested: markers for limit exceeded
   Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
 CHAIN AWARE CACHE
-  [Documentation]  Test chain-aware cache with per-hop Redis entries
+  [Documentation]  Test per-hop Redis cache with markers
   Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
-TIMEOUT HANDLING
-  [Documentation]  Test separate timeout configuration (timeout, http_timeout, redis_timeout)
+TIMEOUT SETTINGS
+  [Documentation]  Test timeout, http_timeout, redis_timeout configuration
   Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
-SAVE INTERMEDIATE REDIRECTS CONFIG
-  [Documentation]  Test save_intermediate_redirs setting with redirectors/non_redirectors options
+SAVE INTERMEDIATE REDIRECTS
+  [Documentation]  Test save_intermediate_redirs configuration
   Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
-HOST PATH IN SYMBOL
-  [Documentation]  Test that redirector_symbol shows full host path (host1->host2->...->hostN)
+REDIRECTOR SYMBOL
+  [Documentation]  Test redirector_symbol with host path output
   Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 

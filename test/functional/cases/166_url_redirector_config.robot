@@ -8,7 +8,7 @@ Variables       ${RSPAMD_TESTDIR}/lib/vars.py
 
 *** Variables ***
 ${CONFIG}          ${RSPAMD_TESTDIR}/configs/url_redirector_no_intermediate.conf
-${CHAIN_MESSAGE}   ${RSPAMD_TESTDIR}/messages/chain_redirect.eml
+${MESSAGE}         ${RSPAMD_TESTDIR}/messages/redir.eml
 ${REDIS_SCOPE}     Suite
 ${RSPAMD_SCOPE}    Suite
 ${RSPAMD_URL_TLD}  ${RSPAMD_TESTDIR}/../lua/unit/test_tld.dat
@@ -17,33 +17,32 @@ ${SETTINGS}        {symbols_enabled=[URL_REDIRECTOR_CHECK]}
 *** Test Cases ***
 SAVE_INTERMEDIATE_REDIRECTORS_ONLY
   [Documentation]  Test save_intermediate_redirs={redirectors=true, non_redirectors=false}
-  ...              Only redirector chain intermediates should be saved
-  Scan File  ${CHAIN_MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
+  Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
 SAVE_INTERMEDIATE_DISABLED
   [Documentation]  Test save_intermediate_redirs with both options disabled
-  Scan File  ${CHAIN_MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
+  Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
 DEFAULT_TIMEOUT_VALUE
   [Documentation]  Test default timeout value (8s) from settings
-  Scan File  ${CHAIN_MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
+  Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
 CUSTOM_HTTP_TIMEOUT
   [Documentation]  Test custom http_timeout setting overrides default
-  Scan File  ${CHAIN_MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
+  Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
 CUSTOM_REDIS_TIMEOUT
   [Documentation]  Test custom redis_timeout setting
-  Scan File  ${CHAIN_MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
+  Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
 REDIRECTOR_SYMBOL_DISABLED
   [Documentation]  Test behavior when redirector_symbol is not configured
-  Scan File  ${CHAIN_MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
+  Scan File  ${MESSAGE}  Flags=ext_urls  Settings=${SETTINGS}
   Expect Extended URL  http://127.0.0.1:18080/hello
 
 *** Keywords ***
