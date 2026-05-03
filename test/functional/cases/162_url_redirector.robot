@@ -9,6 +9,7 @@ Variables       ${RSPAMD_TESTDIR}/lib/vars.py
 *** Variables ***
 ${CONFIG}          ${RSPAMD_TESTDIR}/configs/url_redirector.conf
 ${MESSAGE}         ${RSPAMD_TESTDIR}/messages/redir.eml
+${CHAIN_MESSAGE}   ${RSPAMD_TESTDIR}/messages/chain_redirect.eml
 ${REDIS_SCOPE}     Suite
 ${RSPAMD_SCOPE}    Suite
 ${RSPAMD_URL_TLD}  ${RSPAMD_TESTDIR}/../lua/unit/test_tld.dat
