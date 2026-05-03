@@ -96,12 +96,24 @@ class MainHandler(tornado.web.RequestHandler):
         elif path == "/redirect2":
             # Send an HTTP redirect to the bind address of the server
             self.redirect(f"{self.request.protocol}://{self.request.host}/redirect1")
-        elif self.path == "/redirect3":
+        elif path == "/redirect3":
             # Send an HTTP redirect to the bind address of the server
             self.redirect(f"{self.request.protocol}://{self.request.host}/redirect4")
-        elif self.path == "/redirect4":
+        elif path == "/redirect4":
             # Send an HTTP redirect to the bind address of the server
             self.redirect(f"{self.request.protocol}://{self.request.host}/redirect3")
+        elif path == "/chain1":
+            # Intermediate hop to chain2
+            self.redirect(f"{self.request.protocol}://{self.request.host}/chain2")
+        elif path == "/chain2":
+            # Intermediate hop to chain3
+            self.redirect(f"{self.request.protocol}://{self.request.host}/chain3")
+        elif path == "/chain3":
+            # Final hop
+            self.redirect(f"{self.request.protocol}://{self.request.host}/hello")
+        elif path == "/slow":
+            # Slow redirect
+            self.redirect(f"{self.request.protocol}://{self.request.host}/hello")
         else:
             self.send_response(200)
         self.set_header("Content-Type", "text/plain")

@@ -1,0 +1,7 @@
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Test message with redirect chain
+http://127.0.0.1:18080/chain1
+http://127.0.0.1:18080/redirect2
