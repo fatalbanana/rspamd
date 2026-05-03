@@ -14,8 +14,7 @@ ${MULTIPART_MESSAGE}    ${RSPAMD_TESTDIR}/messages/chain_multipart.eml
 ${REDIS_SCOPE}          Suite
 ${RSPAMD_SCOPE}         Suite
 ${RSPAMD_URL_TLD}       ${RSPAMD_TESTDIR}/../lua/unit/test_tld.dat
-${SETTINGS}             {symbols_enabled=[URL_REDIRECTOR_CHECK]}
-${SETTINGS_WITH_SYMBOL} {symbols_enabled=[URL_REDIRECTOR_CHECK,URL_REDIRECTOR]}
+${SETTINGS}    {symbols_enabled=[URL_REDIRECTOR_CHECK]}
 
 *** Test Cases ***
 CHAIN REDIRECT RESOLUTION WITH INTERMEDIATE HOPS
